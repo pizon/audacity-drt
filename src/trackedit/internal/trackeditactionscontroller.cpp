@@ -250,6 +250,8 @@ static const ActionCode SELECT_RIGHT_OF_PLAYBACK_POS("select-right-of-playback-p
 static const ActionCode SELECT_TRACK_START_TO_CURSOR("select-track-start-to-cursor");
 static const ActionCode SELECT_CURSOR_TO_TRACK_END("select-cursor-to-track-end");
 static const ActionCode SELECT_TRACK_START_TO_END("select-track-start-to-end");
+static const ActionCode STORE_SELECTION("sel-save");
+static const ActionCode RETRIEVE_SELECTION("sel-restore");
 static const ActionQuery SET_SELECTION("action://trackedit/set-selection");
 static const ActionQuery SELECT_TRACK("action://trackedit/select-track");
 static const ActionCode SELECT_ZERO_CROSSING("zero-cross");
@@ -458,6 +460,8 @@ void TrackeditActionsController::init()
     cd->onRequest(this, TRACKEDIT_SELECT_TRACK_START_TO_CURSOR_COMMAND, [this]() { return selectTrackStartToCursor(); });
     cd->onRequest(this, TRACKEDIT_SELECT_CURSOR_TO_TRACK_END_COMMAND, [this]() { return selectCursorToTrackEnd(); });
     cd->onRequest(this, TRACKEDIT_SELECT_TRACK_START_TO_END_COMMAND, [this]() { return selectTrackStartToEnd(); });
+    cd->onRequest(this, TRACKEDIT_STORE_SELECTION_COMMAND, [this]() { return storeSelection(); });
+    cd->onRequest(this, TRACKEDIT_RETRIEVE_SELECTION_COMMAND, [this]() { return retrieveSelection(); });
     cd->onRequest(this, TRACKEDIT_SET_SELECTION_COMMAND, [this](const Params& params) { return setSelection(params); });
     cd->onRequest(this, TRACKEDIT_SELECT_TRACK_COMMAND, [this](const Params& params) { return selectTrackByIndex(params); });
     cd->onRequest(this, TRACKEDIT_ZERO_CROSS_COMMAND, [this]() { return moveCursorToClosestZeroCrossing(); });
@@ -558,6 +562,8 @@ void TrackeditActionsController::init()
         { SELECT_TRACK_START_TO_CURSOR, TRACKEDIT_SELECT_TRACK_START_TO_CURSOR_COMMAND, {} },
         { SELECT_CURSOR_TO_TRACK_END, TRACKEDIT_SELECT_CURSOR_TO_TRACK_END_COMMAND, {} },
         { SELECT_TRACK_START_TO_END, TRACKEDIT_SELECT_TRACK_START_TO_END_COMMAND, {} },
+        { STORE_SELECTION, TRACKEDIT_STORE_SELECTION_COMMAND, {} },
+        { RETRIEVE_SELECTION, TRACKEDIT_RETRIEVE_SELECTION_COMMAND, {} },
         { SET_SELECTION.toString(), TRACKEDIT_SET_SELECTION_COMMAND, queryParamsConv },
         { SELECT_TRACK.toString(), TRACKEDIT_SELECT_TRACK_COMMAND, queryParamsConv },
         { SELECT_ZERO_CROSSING, TRACKEDIT_ZERO_CROSS_COMMAND, {} },
@@ -2003,6 +2009,44 @@ muse::Ret TrackeditActionsController::selectTrackStartToEnd()
 
     selectionController()->setDataSelectedStartTime(leftmostItemStartTime.value(), true);
     selectionController()->setDataSelectedEndTime(rightmostItemEndTime.value(), true);
+    return make_ok();
+}
+
+muse::Ret TrackeditActionsController::storeSelection()
+{
+    if (!globalContext()->currentTrackeditProject()) {
+        return make_ret(Ret::Code::NotSupported);
+    }
+
+    const secs_t cursor = playbackState() ? playbackState()->playbackPosition() : secs_t { 0.0 };
+
+    m_storedSelection = StoredSelection {
+        selectionController()->dataSelectedStartTime(),
+        selectionController()->dataSelectedEndTime(),
+        cursor
+    };
+    return make_ok();
+}
+
+muse::Ret TrackeditActionsController::retrieveSelection()
+{
+    if (!globalContext()->currentTrackeditProject()) {
+        return make_ret(Ret::Code::NotSupported);
+    }
+
+    if (!m_storedSelection.has_value()) {
+        return make_ok();
+    }
+
+    selectionController()->setDataSelectedStartTime(m_storedSelection->start, true);
+    selectionController()->setDataSelectedEndTime(m_storedSelection->end, true);
+
+    // Restore the playhead as well — a range alone is hard to use if the
+    // cursor is still somewhere else on the timeline.
+    commandDispatcher()->dispatch(playback::PLAYBACK_SEEK_COMMAND, {
+        { playback::PLAYBACK_SEEK_TIME_PARAM, Val(m_storedSelection->cursor) },
+        { playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM, Val(false) },
+    });
     return make_ok();
 }
 

@@ -15,10 +15,16 @@
 #include "actions/tests/mocks/actionsdispatchermock.h"
 #include "framework/rcommand/tests/mocks/commanddispatchermock.h"
 #include "context/tests/mocks/globalcontextmock.h"
+#include "context/tests/mocks/playbackstatemock.h"
 #include "project/tests/mocks/audacityprojectmock.h"
+#include "playback/playbackcommands.h"
 
 using ::testing::NiceMock;
 using ::testing::Return;
+using ::testing::_;
+using ::testing::DoAll;
+using ::testing::SaveArg;
+using ::testing::Invoke;
 
 namespace au::trackedit {
 class TrackeditActionsControllerTests : public ::testing::Test
@@ -46,12 +52,15 @@ public:
         m_controller->commandDispatcher.set(m_commandDispatcher);
 
         m_globalContext = std::make_shared<NiceMock<context::GlobalContextMock> >();
+        m_playbackState = std::make_shared<NiceMock<context::PlaybackStateMock> >();
         m_project = std::make_shared<NiceMock<project::AudacityProjectMock> >();
         m_trackeditProject = std::make_shared<NiceMock<TrackeditProjectMock> >();
         m_controller->globalContext.set(m_globalContext);
         ON_CALL(*m_globalContext, currentProject()).WillByDefault(Return(m_project));
         ON_CALL(*m_globalContext, currentTrackeditProject()).WillByDefault(Return(m_trackeditProject));
+        ON_CALL(*m_globalContext, playbackState()).WillByDefault(Return(m_playbackState));
         ON_CALL(*m_project, trackeditProject()).WillByDefault(Return(m_trackeditProject));
+        ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(secs_t { 0.0 }));
 
         ON_CALL(*m_trackNavigationController, focus())
         .WillByDefault(Return(TrackFocus::track(INVALID_TRACK)));
@@ -106,6 +115,23 @@ public:
         return m_controller->mixAndRender(toNewTrack);
     }
 
+    muse::Ret storeSelection()
+    {
+        return m_controller->storeSelection();
+    }
+
+    muse::Ret retrieveSelection()
+    {
+        return m_controller->retrieveSelection();
+    }
+
+    static muse::async::Promise<muse::rcommand::Response> okResponse(const muse::rcommand::Request& request)
+    {
+        return muse::async::make_promise<muse::rcommand::Response>([request](auto resolve) {
+            return resolve(muse::rcommand::make_response(request, muse::make_ok()));
+        });
+    }
+
     void openProject(const TrackIdList& tracks)
     {
         ON_CALL(*m_globalContext, currentProject())
@@ -148,6 +174,7 @@ public:
     std::vector<Track> m_tracks;
     std::shared_ptr<TracksViewRequestsService> m_requests;
     std::shared_ptr<context::GlobalContextMock> m_globalContext;
+    std::shared_ptr<context::PlaybackStateMock> m_playbackState;
     std::shared_ptr<project::AudacityProjectMock> m_project;
     std::shared_ptr<TrackeditProjectMock> m_trackeditProject;
 };
@@ -659,5 +686,43 @@ TEST_F(TrackeditActionsControllerTests, MixAndRenderSkipsEmptyTracks)
 
     //! [WHEN] Mix and render is triggered
     EXPECT_TRUE(mixAndRender(false));
+}
+
+TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRangeAndCursor)
+{
+    //! [GIVEN] A project with a time selection from 1.5s to 4.0s and playhead at 2.25s
+    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(1.5));
+    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(4.0));
+    ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(secs_t { 2.25 }));
+
+    //! [WHEN] The selection is stored
+    EXPECT_TRUE(storeSelection());
+
+    //! [EXPECT] Retrieve writes the stored range back and seeks the playhead
+    EXPECT_CALL(*m_selectionController, setDataSelectedStartTime(secs_t { 1.5 }, true)).Times(1);
+    EXPECT_CALL(*m_selectionController, setDataSelectedEndTime(secs_t { 4.0 }, true)).Times(1);
+
+    muse::rcommand::Request captured;
+    EXPECT_CALL(*m_commandDispatcher, dispatch(_))
+    .WillOnce(DoAll(SaveArg<0>(&captured), Invoke(&TrackeditActionsControllerTests::okResponse)));
+
+    //! [WHEN] The selection is retrieved
+    EXPECT_TRUE(retrieveSelection());
+
+    EXPECT_EQ(captured.command, playback::PLAYBACK_SEEK_COMMAND);
+    ASSERT_TRUE(captured.params.contains(playback::PLAYBACK_SEEK_TIME_PARAM));
+    EXPECT_DOUBLE_EQ(captured.params.at(playback::PLAYBACK_SEEK_TIME_PARAM).toDouble(), 2.25);
+    EXPECT_FALSE(captured.params.at(playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM).toBool());
+}
+
+TEST_F(TrackeditActionsControllerTests, RetrieveSelectionWithoutStoreIsNoOp)
+{
+    //! [EXPECT] Nothing is written when no selection has been stored
+    EXPECT_CALL(*m_selectionController, setDataSelectedStartTime(_, _)).Times(0);
+    EXPECT_CALL(*m_selectionController, setDataSelectedEndTime(_, _)).Times(0);
+    EXPECT_CALL(*m_commandDispatcher, dispatch(_)).Times(0);
+
+    //! [WHEN] Retrieve is triggered with an empty stash
+    EXPECT_TRUE(retrieveSelection());
 }
 }

@@ -241,6 +241,22 @@ const UiActionList ProjectUiActions::m_actions = {
              //: Action description: shown as a tooltip; can be a full sentence
              TranslatableString("action_description", "Track start to end")
              ),
+    UiAction("sel-save",
+             au::context::UiCtxAny,
+             au::context::CTX_ANY,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Store selection"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Store the current time selection")
+             ),
+    UiAction("sel-restore",
+             au::context::UiCtxAny,
+             au::context::CTX_ANY,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Retrieve selection"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Retrieve the previously stored time selection")
+             ),
     UiAction("select-previous-clip-boundary-to-cursor",
              au::context::UiCtxAny,
              au::context::CTX_ANY,

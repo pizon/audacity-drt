@@ -579,6 +579,9 @@ MenuItemList AppMenuModel::makeRegionSelectionItems()
         makeMenuItem(trackedit::TRACKEDIT_SELECT_TRACK_START_TO_CURSOR_COMMAND),
         makeMenuItem(trackedit::TRACKEDIT_SELECT_CURSOR_TO_TRACK_END_COMMAND),
         makeMenuItem(trackedit::TRACKEDIT_SELECT_TRACK_START_TO_END_COMMAND),
+        makeSeparator(),
+        makeMenuItem(trackedit::TRACKEDIT_STORE_SELECTION_COMMAND),
+        makeMenuItem(trackedit::TRACKEDIT_RETRIEVE_SELECTION_COMMAND),
     };
 
     return items;

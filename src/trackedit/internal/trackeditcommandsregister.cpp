@@ -433,6 +433,24 @@ const std::vector<CommandInfo> commandInfos = {
         Decoration()
     },
     CommandInfo{
+        TRACKEDIT_STORE_SELECTION_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Store selection"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Store the current time selection"),
+        InputSchema(),
+        Decoration()
+    },
+    CommandInfo{
+        TRACKEDIT_RETRIEVE_SELECTION_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Retrieve selection"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Retrieve the previously stored time selection"),
+        InputSchema(),
+        Decoration()
+    },
+    CommandInfo{
         TRACKEDIT_SET_SELECTION_COMMAND,
         //: Command title: shown as a menu item or a button label; keep it short
         TranslatableString("command", "Set selection"),

@@ -67,6 +67,8 @@ inline static const muse::rcommand::Command TRACKEDIT_SELECT_CURSOR_TO_TRACK_END
     "command://trackedit/select-cursor-to-track-end");
 inline static const muse::rcommand::Command TRACKEDIT_SELECT_TRACK_START_TO_END_COMMAND(
     "command://trackedit/select-track-start-to-end");
+inline static const muse::rcommand::Command TRACKEDIT_STORE_SELECTION_COMMAND("command://trackedit/store-selection");
+inline static const muse::rcommand::Command TRACKEDIT_RETRIEVE_SELECTION_COMMAND("command://trackedit/retrieve-selection");
 inline static const muse::rcommand::Command TRACKEDIT_SET_SELECTION_COMMAND("command://trackedit/set-selection");
 inline static const muse::rcommand::Command TRACKEDIT_SELECT_TRACK_COMMAND("command://trackedit/select-track");
 inline static const muse::rcommand::Command TRACKEDIT_ZERO_CROSS_COMMAND("command://trackedit/zero-cross");

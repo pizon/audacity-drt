@@ -173,6 +173,8 @@ private:
     muse::Ret selectTrackStartToCursor();
     muse::Ret selectCursorToTrackEnd();
     muse::Ret selectTrackStartToEnd();
+    muse::Ret storeSelection();
+    muse::Ret retrieveSelection();
     muse::Ret setSelection(const muse::rcommand::Params& params);
     muse::Ret selectTrackByIndex(const muse::rcommand::Params& params);
     muse::Ret moveCursorToClosestZeroCrossing();
@@ -209,5 +211,15 @@ private:
     muse::async::Channel<muse::actions::ActionCode> m_actionCheckedChanged;
 
     DeleteBehaviorOnboardingScenario m_deleteBehaviorOnboardingScenario;
+
+    //! Session-only bookmark of the time selection + playhead
+    //! (Select → Region → Store/Retrieve). Cleared when this per-project
+    //! controller is destroyed.
+    struct StoredSelection {
+        secs_t start = 0.0;
+        secs_t end = 0.0;
+        secs_t cursor = 0.0; //! playhead position at store time
+    };
+    std::optional<StoredSelection> m_storedSelection;
 };
 }
