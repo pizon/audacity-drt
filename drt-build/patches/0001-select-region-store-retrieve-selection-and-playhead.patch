@@ -1,0 +1,315 @@
+Select → Region: Store / Retrieve selection (with playhead)
+
+Restores Audacity 3.x-style Select → Region → Store Selection / Retrieve
+Selection for Audacity 4. Also bookmarks and restores the playhead so the
+cursor returns with the time range.
+
+Touches:
+  - trackedit commands, registration, and actions controller
+  - Select → Region menu items
+  - orphaned sel-save / sel-restore shortcuts
+  - unit tests for store/retrieve including playhead seek
+
+Apply against an Audacity 4.x tree:
+  git apply 0001-select-region-store-retrieve-selection-and-playhead.patch
+
+diff --git a/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp b/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp
+index c855082720..e73e98a0d9 100644
+--- a/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp
++++ b/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp
+@@ -579,6 +579,9 @@ MenuItemList AppMenuModel::makeRegionSelectionItems()
+         makeMenuItem(trackedit::TRACKEDIT_SELECT_TRACK_START_TO_CURSOR_COMMAND),
+         makeMenuItem(trackedit::TRACKEDIT_SELECT_CURSOR_TO_TRACK_END_COMMAND),
+         makeMenuItem(trackedit::TRACKEDIT_SELECT_TRACK_START_TO_END_COMMAND),
++        makeSeparator(),
++        makeMenuItem(trackedit::TRACKEDIT_STORE_SELECTION_COMMAND),
++        makeMenuItem(trackedit::TRACKEDIT_RETRIEVE_SELECTION_COMMAND),
+     };
+ 
+     return items;
+diff --git a/src/project/internal/projectuiactions.cpp b/src/project/internal/projectuiactions.cpp
+index 51bdae3256..69b37ff1e3 100644
+--- a/src/project/internal/projectuiactions.cpp
++++ b/src/project/internal/projectuiactions.cpp
+@@ -241,6 +241,22 @@ const UiActionList ProjectUiActions::m_actions = {
+              //: Action description: shown as a tooltip; can be a full sentence
+              TranslatableString("action_description", "Track start to end")
+              ),
++    UiAction("sel-save",
++             au::context::UiCtxAny,
++             au::context::CTX_ANY,
++             //: Action title: shown as a menu item or a button label; keep it short
++             TranslatableString("action", "Store selection"),
++             //: Action description: shown as a tooltip; can be a full sentence
++             TranslatableString("action_description", "Store the current time selection")
++             ),
++    UiAction("sel-restore",
++             au::context::UiCtxAny,
++             au::context::CTX_ANY,
++             //: Action title: shown as a menu item or a button label; keep it short
++             TranslatableString("action", "Retrieve selection"),
++             //: Action description: shown as a tooltip; can be a full sentence
++             TranslatableString("action_description", "Retrieve the previously stored time selection")
++             ),
+     UiAction("select-previous-clip-boundary-to-cursor",
+              au::context::UiCtxAny,
+              au::context::CTX_ANY,
+diff --git a/src/trackedit/internal/trackeditactionscontroller.cpp b/src/trackedit/internal/trackeditactionscontroller.cpp
+index bf4a329549..fc5a61d3e4 100644
+--- a/src/trackedit/internal/trackeditactionscontroller.cpp
++++ b/src/trackedit/internal/trackeditactionscontroller.cpp
+@@ -250,6 +250,8 @@ static const ActionCode SELECT_RIGHT_OF_PLAYBACK_POS("select-right-of-playback-p
+ static const ActionCode SELECT_TRACK_START_TO_CURSOR("select-track-start-to-cursor");
+ static const ActionCode SELECT_CURSOR_TO_TRACK_END("select-cursor-to-track-end");
+ static const ActionCode SELECT_TRACK_START_TO_END("select-track-start-to-end");
++static const ActionCode STORE_SELECTION("sel-save");
++static const ActionCode RETRIEVE_SELECTION("sel-restore");
+ static const ActionQuery SET_SELECTION("action://trackedit/set-selection");
+ static const ActionQuery SELECT_TRACK("action://trackedit/select-track");
+ static const ActionCode SELECT_ZERO_CROSSING("zero-cross");
+@@ -458,6 +460,8 @@ void TrackeditActionsController::init()
+     cd->onRequest(this, TRACKEDIT_SELECT_TRACK_START_TO_CURSOR_COMMAND, [this]() { return selectTrackStartToCursor(); });
+     cd->onRequest(this, TRACKEDIT_SELECT_CURSOR_TO_TRACK_END_COMMAND, [this]() { return selectCursorToTrackEnd(); });
+     cd->onRequest(this, TRACKEDIT_SELECT_TRACK_START_TO_END_COMMAND, [this]() { return selectTrackStartToEnd(); });
++    cd->onRequest(this, TRACKEDIT_STORE_SELECTION_COMMAND, [this]() { return storeSelection(); });
++    cd->onRequest(this, TRACKEDIT_RETRIEVE_SELECTION_COMMAND, [this]() { return retrieveSelection(); });
+     cd->onRequest(this, TRACKEDIT_SET_SELECTION_COMMAND, [this](const Params& params) { return setSelection(params); });
+     cd->onRequest(this, TRACKEDIT_SELECT_TRACK_COMMAND, [this](const Params& params) { return selectTrackByIndex(params); });
+     cd->onRequest(this, TRACKEDIT_ZERO_CROSS_COMMAND, [this]() { return moveCursorToClosestZeroCrossing(); });
+@@ -558,6 +562,8 @@ void TrackeditActionsController::init()
+         { SELECT_TRACK_START_TO_CURSOR, TRACKEDIT_SELECT_TRACK_START_TO_CURSOR_COMMAND, {} },
+         { SELECT_CURSOR_TO_TRACK_END, TRACKEDIT_SELECT_CURSOR_TO_TRACK_END_COMMAND, {} },
+         { SELECT_TRACK_START_TO_END, TRACKEDIT_SELECT_TRACK_START_TO_END_COMMAND, {} },
++        { STORE_SELECTION, TRACKEDIT_STORE_SELECTION_COMMAND, {} },
++        { RETRIEVE_SELECTION, TRACKEDIT_RETRIEVE_SELECTION_COMMAND, {} },
+         { SET_SELECTION.toString(), TRACKEDIT_SET_SELECTION_COMMAND, queryParamsConv },
+         { SELECT_TRACK.toString(), TRACKEDIT_SELECT_TRACK_COMMAND, queryParamsConv },
+         { SELECT_ZERO_CROSSING, TRACKEDIT_ZERO_CROSS_COMMAND, {} },
+@@ -2006,6 +2012,44 @@ muse::Ret TrackeditActionsController::selectTrackStartToEnd()
+     return make_ok();
+ }
+ 
++muse::Ret TrackeditActionsController::storeSelection()
++{
++    if (!globalContext()->currentTrackeditProject()) {
++        return make_ret(Ret::Code::NotSupported);
++    }
++
++    const secs_t cursor = playbackState() ? playbackState()->playbackPosition() : secs_t { 0.0 };
++
++    m_storedSelection = StoredSelection {
++        selectionController()->dataSelectedStartTime(),
++        selectionController()->dataSelectedEndTime(),
++        cursor
++    };
++    return make_ok();
++}
++
++muse::Ret TrackeditActionsController::retrieveSelection()
++{
++    if (!globalContext()->currentTrackeditProject()) {
++        return make_ret(Ret::Code::NotSupported);
++    }
++
++    if (!m_storedSelection.has_value()) {
++        return make_ok();
++    }
++
++    selectionController()->setDataSelectedStartTime(m_storedSelection->start, true);
++    selectionController()->setDataSelectedEndTime(m_storedSelection->end, true);
++
++    // Restore the playhead as well — a range alone is hard to use if the
++    // cursor is still somewhere else on the timeline.
++    commandDispatcher()->dispatch(playback::PLAYBACK_SEEK_COMMAND, {
++        { playback::PLAYBACK_SEEK_TIME_PARAM, Val(m_storedSelection->cursor) },
++        { playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM, Val(false) },
++    });
++    return make_ok();
++}
++
+ muse::Ret TrackeditActionsController::setSelection(const Params& params)
+ {
+     if (!params.contains(TRACKEDIT_START_PARAM) || !params.contains(TRACKEDIT_END_PARAM)) {
+diff --git a/src/trackedit/internal/trackeditactionscontroller.h b/src/trackedit/internal/trackeditactionscontroller.h
+index 63b9646b6a..6552b3e193 100644
+--- a/src/trackedit/internal/trackeditactionscontroller.h
++++ b/src/trackedit/internal/trackeditactionscontroller.h
+@@ -173,6 +173,8 @@ private:
+     muse::Ret selectTrackStartToCursor();
+     muse::Ret selectCursorToTrackEnd();
+     muse::Ret selectTrackStartToEnd();
++    muse::Ret storeSelection();
++    muse::Ret retrieveSelection();
+     muse::Ret setSelection(const muse::rcommand::Params& params);
+     muse::Ret selectTrackByIndex(const muse::rcommand::Params& params);
+     muse::Ret moveCursorToClosestZeroCrossing();
+@@ -209,5 +211,15 @@ private:
+     muse::async::Channel<muse::actions::ActionCode> m_actionCheckedChanged;
+ 
+     DeleteBehaviorOnboardingScenario m_deleteBehaviorOnboardingScenario;
++
++    //! Session-only bookmark of the time selection + playhead
++    //! (Select → Region → Store/Retrieve). Cleared when this per-project
++    //! controller is destroyed.
++    struct StoredSelection {
++        secs_t start = 0.0;
++        secs_t end = 0.0;
++        secs_t cursor = 0.0; //! playhead position at store time
++    };
++    std::optional<StoredSelection> m_storedSelection;
+ };
+ }
+diff --git a/src/trackedit/internal/trackeditcommandsregister.cpp b/src/trackedit/internal/trackeditcommandsregister.cpp
+index fcdea02853..ca50d6f273 100644
+--- a/src/trackedit/internal/trackeditcommandsregister.cpp
++++ b/src/trackedit/internal/trackeditcommandsregister.cpp
+@@ -432,6 +432,24 @@ const std::vector<CommandInfo> commandInfos = {
+         InputSchema(),
+         Decoration()
+     },
++    CommandInfo{
++        TRACKEDIT_STORE_SELECTION_COMMAND,
++        //: Command title: shown as a menu item or a button label; keep it short
++        TranslatableString("command", "Store selection"),
++        //: Command description: shown as a tooltip; can be a full sentence
++        TranslatableString("command_description", "Store the current time selection"),
++        InputSchema(),
++        Decoration()
++    },
++    CommandInfo{
++        TRACKEDIT_RETRIEVE_SELECTION_COMMAND,
++        //: Command title: shown as a menu item or a button label; keep it short
++        TranslatableString("command", "Retrieve selection"),
++        //: Command description: shown as a tooltip; can be a full sentence
++        TranslatableString("command_description", "Retrieve the previously stored time selection"),
++        InputSchema(),
++        Decoration()
++    },
+     CommandInfo{
+         TRACKEDIT_SET_SELECTION_COMMAND,
+         //: Command title: shown as a menu item or a button label; keep it short
+diff --git a/src/trackedit/tests/trackeditactionscontroller_tests.cpp b/src/trackedit/tests/trackeditactionscontroller_tests.cpp
+index ad4dcfeaf3..1ba0f4aff9 100644
+--- a/src/trackedit/tests/trackeditactionscontroller_tests.cpp
++++ b/src/trackedit/tests/trackeditactionscontroller_tests.cpp
+@@ -15,10 +15,16 @@
+ #include "actions/tests/mocks/actionsdispatchermock.h"
+ #include "framework/rcommand/tests/mocks/commanddispatchermock.h"
+ #include "context/tests/mocks/globalcontextmock.h"
++#include "context/tests/mocks/playbackstatemock.h"
+ #include "project/tests/mocks/audacityprojectmock.h"
++#include "playback/playbackcommands.h"
+ 
+ using ::testing::NiceMock;
+ using ::testing::Return;
++using ::testing::_;
++using ::testing::DoAll;
++using ::testing::SaveArg;
++using ::testing::Invoke;
+ 
+ namespace au::trackedit {
+ class TrackeditActionsControllerTests : public ::testing::Test
+@@ -46,12 +52,15 @@ public:
+         m_controller->commandDispatcher.set(m_commandDispatcher);
+ 
+         m_globalContext = std::make_shared<NiceMock<context::GlobalContextMock> >();
++        m_playbackState = std::make_shared<NiceMock<context::PlaybackStateMock> >();
+         m_project = std::make_shared<NiceMock<project::AudacityProjectMock> >();
+         m_trackeditProject = std::make_shared<NiceMock<TrackeditProjectMock> >();
+         m_controller->globalContext.set(m_globalContext);
+         ON_CALL(*m_globalContext, currentProject()).WillByDefault(Return(m_project));
+         ON_CALL(*m_globalContext, currentTrackeditProject()).WillByDefault(Return(m_trackeditProject));
++        ON_CALL(*m_globalContext, playbackState()).WillByDefault(Return(m_playbackState));
+         ON_CALL(*m_project, trackeditProject()).WillByDefault(Return(m_trackeditProject));
++        ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(secs_t { 0.0 }));
+ 
+         ON_CALL(*m_trackNavigationController, focus())
+         .WillByDefault(Return(TrackFocus::track(INVALID_TRACK)));
+@@ -106,6 +115,23 @@ public:
+         return m_controller->mixAndRender(toNewTrack);
+     }
+ 
++    muse::Ret storeSelection()
++    {
++        return m_controller->storeSelection();
++    }
++
++    muse::Ret retrieveSelection()
++    {
++        return m_controller->retrieveSelection();
++    }
++
++    static muse::async::Promise<muse::rcommand::Response> okResponse(const muse::rcommand::Request& request)
++    {
++        return muse::async::make_promise<muse::rcommand::Response>([request](auto resolve) {
++            return resolve(muse::rcommand::make_response(request, muse::make_ok()));
++        });
++    }
++
+     void openProject(const TrackIdList& tracks)
+     {
+         ON_CALL(*m_globalContext, currentProject())
+@@ -148,6 +174,7 @@ public:
+     std::vector<Track> m_tracks;
+     std::shared_ptr<TracksViewRequestsService> m_requests;
+     std::shared_ptr<context::GlobalContextMock> m_globalContext;
++    std::shared_ptr<context::PlaybackStateMock> m_playbackState;
+     std::shared_ptr<project::AudacityProjectMock> m_project;
+     std::shared_ptr<TrackeditProjectMock> m_trackeditProject;
+ };
+@@ -660,4 +687,42 @@ TEST_F(TrackeditActionsControllerTests, MixAndRenderSkipsEmptyTracks)
+     //! [WHEN] Mix and render is triggered
+     EXPECT_TRUE(mixAndRender(false));
+ }
++
++TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRangeAndCursor)
++{
++    //! [GIVEN] A project with a time selection from 1.5s to 4.0s and playhead at 2.25s
++    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(1.5));
++    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(4.0));
++    ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(secs_t { 2.25 }));
++
++    //! [WHEN] The selection is stored
++    EXPECT_TRUE(storeSelection());
++
++    //! [EXPECT] Retrieve writes the stored range back and seeks the playhead
++    EXPECT_CALL(*m_selectionController, setDataSelectedStartTime(secs_t { 1.5 }, true)).Times(1);
++    EXPECT_CALL(*m_selectionController, setDataSelectedEndTime(secs_t { 4.0 }, true)).Times(1);
++
++    muse::rcommand::Request captured;
++    EXPECT_CALL(*m_commandDispatcher, dispatch(_))
++    .WillOnce(DoAll(SaveArg<0>(&captured), Invoke(&TrackeditActionsControllerTests::okResponse)));
++
++    //! [WHEN] The selection is retrieved
++    EXPECT_TRUE(retrieveSelection());
++
++    EXPECT_EQ(captured.command, playback::PLAYBACK_SEEK_COMMAND);
++    ASSERT_TRUE(captured.params.contains(playback::PLAYBACK_SEEK_TIME_PARAM));
++    EXPECT_DOUBLE_EQ(captured.params.at(playback::PLAYBACK_SEEK_TIME_PARAM).toDouble(), 2.25);
++    EXPECT_FALSE(captured.params.at(playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM).toBool());
++}
++
++TEST_F(TrackeditActionsControllerTests, RetrieveSelectionWithoutStoreIsNoOp)
++{
++    //! [EXPECT] Nothing is written when no selection has been stored
++    EXPECT_CALL(*m_selectionController, setDataSelectedStartTime(_, _)).Times(0);
++    EXPECT_CALL(*m_selectionController, setDataSelectedEndTime(_, _)).Times(0);
++    EXPECT_CALL(*m_commandDispatcher, dispatch(_)).Times(0);
++
++    //! [WHEN] Retrieve is triggered with an empty stash
++    EXPECT_TRUE(retrieveSelection());
++}
+ }
+diff --git a/src/trackedit/trackeditcommands.h b/src/trackedit/trackeditcommands.h
+index 087e5c2a61..7c324f6b56 100644
+--- a/src/trackedit/trackeditcommands.h
++++ b/src/trackedit/trackeditcommands.h
+@@ -67,6 +67,8 @@ inline static const muse::rcommand::Command TRACKEDIT_SELECT_CURSOR_TO_TRACK_END
+     "command://trackedit/select-cursor-to-track-end");
+ inline static const muse::rcommand::Command TRACKEDIT_SELECT_TRACK_START_TO_END_COMMAND(
+     "command://trackedit/select-track-start-to-end");
++inline static const muse::rcommand::Command TRACKEDIT_STORE_SELECTION_COMMAND("command://trackedit/store-selection");
++inline static const muse::rcommand::Command TRACKEDIT_RETRIEVE_SELECTION_COMMAND("command://trackedit/retrieve-selection");
+ inline static const muse::rcommand::Command TRACKEDIT_SET_SELECTION_COMMAND("command://trackedit/set-selection");
+ inline static const muse::rcommand::Command TRACKEDIT_SELECT_TRACK_COMMAND("command://trackedit/select-track");
+ inline static const muse::rcommand::Command TRACKEDIT_ZERO_CROSS_COMMAND("command://trackedit/zero-cross");

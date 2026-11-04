@@ -1,0 +1,115 @@
+# Audacity 4.x build environment for Fedora 44 hosts.
+# Uses Fedora's Qt 6.11 packages (matches AU4 CI's Qt 6.11.2 requirement).
+FROM fedora:44
+
+LABEL org.opencontainers.image.title="audacity4-build-fedora44" \
+      org.opencontainers.image.description="Build environment for Audacity 4.x on Fedora 44" \
+      org.opencontainers.image.source="local"
+
+# Keep dnf lean and reproducible-ish for repeated rebuilds.
+RUN dnf -y upgrade --refresh \
+    && dnf -y install \
+        # Build tools
+        @development-tools \
+        cmake \
+        ninja-build \
+        gcc \
+        gcc-c++ \
+        libstdc++-static \
+        ccache \
+        git \
+        file \
+        curl \
+        wget2 \
+        unzip \
+        7zip \
+        patchelf \
+        autoconf \
+        automake \
+        libtool \
+        squashfs-tools \
+        fuse3 \
+        desktop-file-utils \
+        pkgconf-pkg-config \
+        python3 \
+        python3-pip \
+        python3-devel \
+        gettext-devel \
+        m4 \
+        libappstream-glib \
+        # Qt 6.11 (system packages)
+        qt6-qtbase-devel \
+        qt6-qtbase-private-devel \
+        qt6-qtdeclarative-devel \
+        qt6-qt5compat-devel \
+        qt6-qtnetworkauth-devel \
+        qt6-qtshadertools-devel \
+        qt6-qtwebsockets-devel \
+        qt6-qtgraphs-devel \
+        qt6-qtquick3d-devel \
+        qt6-qttools-devel \
+        qt6-qtscxml-devel \
+        qt6-qtsvg-devel \
+        qt6-qtwayland-devel \
+        # Audio / media
+        alsa-lib-devel \
+        pulseaudio-libs-devel \
+        pipewire-devel \
+        jack-audio-connection-kit-devel \
+        libsndfile-devel \
+        portaudio-devel \
+        flac-devel \
+        lame-devel \
+        libogg-devel \
+        libvorbis-devel \
+        mpg123-devel \
+        wavpack-devel \
+        opusfile-devel \
+        lilv-devel \
+        suil-devel \
+        # Graphics / X11 / Wayland (Qt runtime + Muse deps)
+        mesa-libGL-devel \
+        mesa-libEGL-devel \
+        vulkan-loader-devel \
+        fontconfig-devel \
+        freetype-devel \
+        harfbuzz-devel \
+        libjpeg-turbo-devel \
+        zlib-ng-compat-devel \
+        expat-devel \
+        libicu-devel \
+        wayland-devel \
+        libXcomposite-devel \
+        libXcursor-devel \
+        libXi-devel \
+        libXrandr-devel \
+        libXtst-devel \
+        libxkbcommon-devel \
+        libxkbcommon-x11-devel \
+        libxcb-devel \
+        xcb-util-devel \
+        xcb-util-image-devel \
+        xcb-util-keysyms-devel \
+        xcb-util-renderutil-devel \
+        xcb-util-wm-devel \
+        libdrm-devel \
+        # Misc libraries used by AU3 wrap / Muse modules
+        cups-devel \
+        openssl-devel \
+        libpq-devel \
+        nss-devel \
+        systemd-devel \
+        gtk2-devel \
+        libuuid-devel \
+    && dnf -y clean all \
+    && rm -rf /var/cache/dnf
+
+# Prefer ccache when present; host can mount ~/.ccache if desired.
+ENV CCACHE_DIR=/ccache \
+    CMAKE_GENERATOR=Ninja \
+    QT_QPA_PLATFORM=offscreen
+
+WORKDIR /src
+
+# Default to an interactive shell; helper scripts override the command.
+CMD ["/bin/bash"]
