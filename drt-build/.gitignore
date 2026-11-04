@@ -1,1 +1,4 @@
 .appimage-build-number
+
+# Track DRT packaging scripts (repo root ignores build-*)
+!build-image.sh
