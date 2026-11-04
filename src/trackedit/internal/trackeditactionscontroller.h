@@ -212,13 +212,12 @@ private:
 
     DeleteBehaviorOnboardingScenario m_deleteBehaviorOnboardingScenario;
 
-    //! Session-only bookmark of the time selection + playhead
-    //! (Select → Region → Store/Retrieve). Cleared when this per-project
-    //! controller is destroyed.
+    //! Session-only bookmark of the time selection (Select → Region →
+    //! Store/Retrieve), matching AU3's SelectedRegion save/restore.
+    //! Cleared when this per-project controller is destroyed.
     struct StoredSelection {
         secs_t start = 0.0;
         secs_t end = 0.0;
-        secs_t cursor = 0.0; //! playhead position at store time
     };
     std::optional<StoredSelection> m_storedSelection;
 };

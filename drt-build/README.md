@@ -38,7 +38,7 @@ podman tag localhost/audacity4-build:fedora44 localhost/audacity-drt-build:fedor
 From a clean Audacity 4.x checkout:
 
 ```bash
-git apply /path/to/audacity-drt/drt-build/patches/0001-select-region-store-retrieve-selection-and-playhead.patch
+git apply /path/to/audacity-drt/drt-build/patches/0001-select-region-store-retrieve-selection.patch
 ```
 
 These are plain `git diff` patches; use `git apply` (not `git am`).

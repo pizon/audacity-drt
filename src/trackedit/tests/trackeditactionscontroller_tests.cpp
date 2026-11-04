@@ -688,9 +688,9 @@ TEST_F(TrackeditActionsControllerTests, MixAndRenderSkipsEmptyTracks)
     EXPECT_TRUE(mixAndRender(false));
 }
 
-TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRangeAndCursor)
+TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRangeAndSeeksToStart)
 {
-    //! [GIVEN] A project with a time selection from 1.5s to 4.0s and playhead at 2.25s
+    //! [GIVEN] A project with a time selection from 1.5s to 4.0s (playhead elsewhere)
     ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(1.5));
     ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(4.0));
     ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(secs_t { 2.25 }));
@@ -698,7 +698,8 @@ TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRan
     //! [WHEN] The selection is stored
     EXPECT_TRUE(storeSelection());
 
-    //! [EXPECT] Retrieve writes the stored range back and seeks the playhead
+    //! [EXPECT] Retrieve restores the range and parks the playhead on the left
+    //! edge (paste uses playhead as the insert point).
     EXPECT_CALL(*m_selectionController, setDataSelectedStartTime(secs_t { 1.5 }, true)).Times(1);
     EXPECT_CALL(*m_selectionController, setDataSelectedEndTime(secs_t { 4.0 }, true)).Times(1);
 
@@ -711,7 +712,7 @@ TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRan
 
     EXPECT_EQ(captured.command, playback::PLAYBACK_SEEK_COMMAND);
     ASSERT_TRUE(captured.params.contains(playback::PLAYBACK_SEEK_TIME_PARAM));
-    EXPECT_DOUBLE_EQ(captured.params.at(playback::PLAYBACK_SEEK_TIME_PARAM).toDouble(), 2.25);
+    EXPECT_DOUBLE_EQ(captured.params.at(playback::PLAYBACK_SEEK_TIME_PARAM).toDouble(), 1.5);
     EXPECT_FALSE(captured.params.at(playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM).toBool());
 }
 

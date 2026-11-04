@@ -4,9 +4,9 @@ Plain `git diff` patches that recreate DRT features on top of upstream Audacity 
 
 | Patch | Summary |
 |-------|---------|
-| `0001-select-region-store-retrieve-selection-and-playhead.patch` | Select → Region Store/Retrieve, including playhead |
+| `0001-select-region-store-retrieve-selection.patch` | Select → Region Store/Retrieve (playhead parked at range start for paste) |
 
 ```bash
 cd /path/to/audacity   # clean upstream 4.x tree
-git apply /path/to/drt-build/patches/0001-select-region-store-retrieve-selection-and-playhead.patch
+git apply /path/to/drt-build/patches/0001-select-region-store-retrieve-selection.patch
 ```

@@ -1,17 +1,18 @@
-Select → Region: Store / Retrieve selection (with playhead)
+Select → Region: Store / Retrieve selection
 
 Restores Audacity 3.x-style Select → Region → Store Selection / Retrieve
-Selection for Audacity 4. Also bookmarks and restores the playhead so the
-cursor returns with the time range.
+Selection for Audacity 4. On retrieve, the playhead is moved to the left
+edge of the restored range so paste (which inserts at the playhead) lands
+where AU3 paste did.
 
 Touches:
   - trackedit commands, registration, and actions controller
   - Select → Region menu items
   - orphaned sel-save / sel-restore shortcuts
-  - unit tests for store/retrieve including playhead seek
+  - unit tests for store/retrieve
 
 Apply against an Audacity 4.x tree:
-  git apply 0001-select-region-store-retrieve-selection-and-playhead.patch
+  git apply 0001-select-region-store-retrieve-selection.patch
 
 diff --git a/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp b/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp
 index c855082720..e73e98a0d9 100644
@@ -55,7 +56,7 @@ index 51bdae3256..69b37ff1e3 100644
               au::context::UiCtxAny,
               au::context::CTX_ANY,
 diff --git a/src/trackedit/internal/trackeditactionscontroller.cpp b/src/trackedit/internal/trackeditactionscontroller.cpp
-index bf4a329549..fc5a61d3e4 100644
+index bf4a329549..6d712fba4e 100644
 --- a/src/trackedit/internal/trackeditactionscontroller.cpp
 +++ b/src/trackedit/internal/trackeditactionscontroller.cpp
 @@ -250,6 +250,8 @@ static const ActionCode SELECT_RIGHT_OF_PLAYBACK_POS("select-right-of-playback-p
@@ -85,7 +86,7 @@ index bf4a329549..fc5a61d3e4 100644
          { SET_SELECTION.toString(), TRACKEDIT_SET_SELECTION_COMMAND, queryParamsConv },
          { SELECT_TRACK.toString(), TRACKEDIT_SELECT_TRACK_COMMAND, queryParamsConv },
          { SELECT_ZERO_CROSSING, TRACKEDIT_ZERO_CROSS_COMMAND, {} },
-@@ -2006,6 +2012,44 @@ muse::Ret TrackeditActionsController::selectTrackStartToEnd()
+@@ -2006,6 +2012,42 @@ muse::Ret TrackeditActionsController::selectTrackStartToEnd()
      return make_ok();
  }
  
@@ -95,12 +96,9 @@ index bf4a329549..fc5a61d3e4 100644
 +        return make_ret(Ret::Code::NotSupported);
 +    }
 +
-+    const secs_t cursor = playbackState() ? playbackState()->playbackPosition() : secs_t { 0.0 };
-+
 +    m_storedSelection = StoredSelection {
 +        selectionController()->dataSelectedStartTime(),
-+        selectionController()->dataSelectedEndTime(),
-+        cursor
++        selectionController()->dataSelectedEndTime()
 +    };
 +    return make_ok();
 +}
@@ -118,10 +116,11 @@ index bf4a329549..fc5a61d3e4 100644
 +    selectionController()->setDataSelectedStartTime(m_storedSelection->start, true);
 +    selectionController()->setDataSelectedEndTime(m_storedSelection->end, true);
 +
-+    // Restore the playhead as well — a range alone is hard to use if the
-+    // cursor is still somewhere else on the timeline.
++    // Paste uses the playhead as its insert point (not the selection range).
++    // Park the playhead on the left edge so retrieve → paste matches AU3, where
++    // paste lands at the restored region start — never mid-selection.
 +    commandDispatcher()->dispatch(playback::PLAYBACK_SEEK_COMMAND, {
-+        { playback::PLAYBACK_SEEK_TIME_PARAM, Val(m_storedSelection->cursor) },
++        { playback::PLAYBACK_SEEK_TIME_PARAM, Val(m_storedSelection->start) },
 +        { playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM, Val(false) },
 +    });
 +    return make_ok();
@@ -131,7 +130,7 @@ index bf4a329549..fc5a61d3e4 100644
  {
      if (!params.contains(TRACKEDIT_START_PARAM) || !params.contains(TRACKEDIT_END_PARAM)) {
 diff --git a/src/trackedit/internal/trackeditactionscontroller.h b/src/trackedit/internal/trackeditactionscontroller.h
-index 63b9646b6a..6552b3e193 100644
+index 63b9646b6a..6e4c770893 100644
 --- a/src/trackedit/internal/trackeditactionscontroller.h
 +++ b/src/trackedit/internal/trackeditactionscontroller.h
 @@ -173,6 +173,8 @@ private:
@@ -143,18 +142,17 @@ index 63b9646b6a..6552b3e193 100644
      muse::Ret setSelection(const muse::rcommand::Params& params);
      muse::Ret selectTrackByIndex(const muse::rcommand::Params& params);
      muse::Ret moveCursorToClosestZeroCrossing();
-@@ -209,5 +211,15 @@ private:
+@@ -209,5 +211,14 @@ private:
      muse::async::Channel<muse::actions::ActionCode> m_actionCheckedChanged;
  
      DeleteBehaviorOnboardingScenario m_deleteBehaviorOnboardingScenario;
 +
-+    //! Session-only bookmark of the time selection + playhead
-+    //! (Select → Region → Store/Retrieve). Cleared when this per-project
-+    //! controller is destroyed.
++    //! Session-only bookmark of the time selection (Select → Region →
++    //! Store/Retrieve), matching AU3's SelectedRegion save/restore.
++    //! Cleared when this per-project controller is destroyed.
 +    struct StoredSelection {
 +        secs_t start = 0.0;
 +        secs_t end = 0.0;
-+        secs_t cursor = 0.0; //! playhead position at store time
 +    };
 +    std::optional<StoredSelection> m_storedSelection;
  };
@@ -189,7 +187,7 @@ index fcdea02853..ca50d6f273 100644
          TRACKEDIT_SET_SELECTION_COMMAND,
          //: Command title: shown as a menu item or a button label; keep it short
 diff --git a/src/trackedit/tests/trackeditactionscontroller_tests.cpp b/src/trackedit/tests/trackeditactionscontroller_tests.cpp
-index ad4dcfeaf3..1ba0f4aff9 100644
+index ad4dcfeaf3..26b14c86f4 100644
 --- a/src/trackedit/tests/trackeditactionscontroller_tests.cpp
 +++ b/src/trackedit/tests/trackeditactionscontroller_tests.cpp
 @@ -15,10 +15,16 @@
@@ -257,14 +255,14 @@ index ad4dcfeaf3..1ba0f4aff9 100644
      std::shared_ptr<project::AudacityProjectMock> m_project;
      std::shared_ptr<TrackeditProjectMock> m_trackeditProject;
  };
-@@ -660,4 +687,42 @@ TEST_F(TrackeditActionsControllerTests, MixAndRenderSkipsEmptyTracks)
+@@ -660,4 +687,43 @@ TEST_F(TrackeditActionsControllerTests, MixAndRenderSkipsEmptyTracks)
      //! [WHEN] Mix and render is triggered
      EXPECT_TRUE(mixAndRender(false));
  }
 +
-+TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRangeAndCursor)
++TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRangeAndSeeksToStart)
 +{
-+    //! [GIVEN] A project with a time selection from 1.5s to 4.0s and playhead at 2.25s
++    //! [GIVEN] A project with a time selection from 1.5s to 4.0s (playhead elsewhere)
 +    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(1.5));
 +    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(4.0));
 +    ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(secs_t { 2.25 }));
@@ -272,7 +270,8 @@ index ad4dcfeaf3..1ba0f4aff9 100644
 +    //! [WHEN] The selection is stored
 +    EXPECT_TRUE(storeSelection());
 +
-+    //! [EXPECT] Retrieve writes the stored range back and seeks the playhead
++    //! [EXPECT] Retrieve restores the range and parks the playhead on the left
++    //! edge (paste uses playhead as the insert point).
 +    EXPECT_CALL(*m_selectionController, setDataSelectedStartTime(secs_t { 1.5 }, true)).Times(1);
 +    EXPECT_CALL(*m_selectionController, setDataSelectedEndTime(secs_t { 4.0 }, true)).Times(1);
 +
@@ -285,7 +284,7 @@ index ad4dcfeaf3..1ba0f4aff9 100644
 +
 +    EXPECT_EQ(captured.command, playback::PLAYBACK_SEEK_COMMAND);
 +    ASSERT_TRUE(captured.params.contains(playback::PLAYBACK_SEEK_TIME_PARAM));
-+    EXPECT_DOUBLE_EQ(captured.params.at(playback::PLAYBACK_SEEK_TIME_PARAM).toDouble(), 2.25);
++    EXPECT_DOUBLE_EQ(captured.params.at(playback::PLAYBACK_SEEK_TIME_PARAM).toDouble(), 1.5);
 +    EXPECT_FALSE(captured.params.at(playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM).toBool());
 +}
 +

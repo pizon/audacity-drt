@@ -2018,12 +2018,9 @@ muse::Ret TrackeditActionsController::storeSelection()
         return make_ret(Ret::Code::NotSupported);
     }
 
-    const secs_t cursor = playbackState() ? playbackState()->playbackPosition() : secs_t { 0.0 };
-
     m_storedSelection = StoredSelection {
         selectionController()->dataSelectedStartTime(),
-        selectionController()->dataSelectedEndTime(),
-        cursor
+        selectionController()->dataSelectedEndTime()
     };
     return make_ok();
 }
@@ -2041,10 +2038,11 @@ muse::Ret TrackeditActionsController::retrieveSelection()
     selectionController()->setDataSelectedStartTime(m_storedSelection->start, true);
     selectionController()->setDataSelectedEndTime(m_storedSelection->end, true);
 
-    // Restore the playhead as well — a range alone is hard to use if the
-    // cursor is still somewhere else on the timeline.
+    // Paste uses the playhead as its insert point (not the selection range).
+    // Park the playhead on the left edge so retrieve → paste matches AU3, where
+    // paste lands at the restored region start — never mid-selection.
     commandDispatcher()->dispatch(playback::PLAYBACK_SEEK_COMMAND, {
-        { playback::PLAYBACK_SEEK_TIME_PARAM, Val(m_storedSelection->cursor) },
+        { playback::PLAYBACK_SEEK_TIME_PARAM, Val(m_storedSelection->start) },
         { playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM, Val(false) },
     });
     return make_ok();
