@@ -1509,10 +1509,7 @@ TEST_F(Au3TracksInteractionTests, PasteOnEmptyTrack)
     ASSERT_NE(trackCopy, nullptr) << "Failed to copy clip";
     const ITrackDataPtr trackData = std::make_shared<Au3TrackData>(trackCopy);
 
-    //! [EXPECT] The playback is asked for its position
-    EXPECT_CALL(*m_playbackState, playbackPosition()).Times(1).WillOnce(Return(0.0));
-
-    //! [WHEN] Paste from clipboard
+    //! [WHEN] Paste from clipboard (insert time comes from the paste begin arg)
     constexpr auto moveClips = true;
     constexpr auto moveAllTracks = true;
     constexpr auto isMultiSelectionCopy = false;
@@ -1753,13 +1750,10 @@ TEST_F(Au3TracksInteractionTests, PasteLabelTrackCreatesNewTrack)
     const size_t tracksBeforePaste = projectTracks.Size();
     ASSERT_EQ(tracksBeforePaste, 3) << "Should have 3 tracks before paste";
 
-    //! [EXPECT] The playback is asked for its position (when creating new track)
-    EXPECT_CALL(*m_playbackState, playbackPosition()).Times(1).WillOnce(Return(5.0));
-
     //! [EXPECT] The project is notified about track added
     EXPECT_CALL(*m_trackEditProject, notifyAboutTrackAdded(_)).Times(1);
 
-    //! [WHEN] Paste from clipboard
+    //! [WHEN] Paste from clipboard (insert time comes from the paste begin arg)
     constexpr auto moveClips = false;
     constexpr auto moveAllTracks = false;
     constexpr auto isMultiSelectionCopy = false;

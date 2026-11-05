@@ -125,6 +125,11 @@ public:
         return m_controller->retrieveSelection();
     }
 
+    muse::Ret pasteOverlap()
+    {
+        return m_controller->pasteOverlap();
+    }
+
     static muse::async::Promise<muse::rcommand::Response> okResponse(const muse::rcommand::Request& request)
     {
         return muse::async::make_promise<muse::rcommand::Response>([request](auto resolve) {
@@ -688,6 +693,20 @@ TEST_F(TrackeditActionsControllerTests, MixAndRenderSkipsEmptyTracks)
     EXPECT_TRUE(mixAndRender(false));
 }
 
+TEST_F(TrackeditActionsControllerTests, PasteOverlapUsesSelectionStartNotPlayhead)
+{
+    //! [GIVEN] Selection starts at 1.5s; playhead sits elsewhere
+    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(1.5));
+    ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(secs_t { 9.0 }));
+
+    //! [EXPECT] Paste is aimed at the selection start, not the playhead
+    EXPECT_CALL(*m_trackeditInteraction, pasteFromClipboard(secs_t { 1.5 }, false, false))
+    .WillOnce(Return(muse::make_ok()));
+
+    //! [WHEN] Overlap paste is triggered
+    EXPECT_TRUE(pasteOverlap());
+}
+
 TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRangeAndSeeksToStart)
 {
     //! [GIVEN] A project with a time selection from 1.5s to 4.0s (playhead elsewhere)
@@ -698,8 +717,7 @@ TEST_F(TrackeditActionsControllerTests, StoreAndRetrieveSelectionRestoresTimeRan
     //! [WHEN] The selection is stored
     EXPECT_TRUE(storeSelection());
 
-    //! [EXPECT] Retrieve restores the range and parks the playhead on the left
-    //! edge (paste uses playhead as the insert point).
+    //! [EXPECT] Retrieve restores the range and parks the playhead on the left edge.
     EXPECT_CALL(*m_selectionController, setDataSelectedStartTime(secs_t { 1.5 }, true)).Times(1);
     EXPECT_CALL(*m_selectionController, setDataSelectedEndTime(secs_t { 4.0 }, true)).Times(1);
 

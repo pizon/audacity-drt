@@ -1511,7 +1511,8 @@ muse::Ret TrackeditActionsController::pasteOverlap()
 {
     project::IAudacityProjectPtr project = globalContext()->currentProject();
     auto tracks = project->trackeditProject()->trackList();
-    const double selectedStartTime = playbackState()->playbackPosition();
+    // Insert at the selection start, matching cut/delete — not the playhead.
+    const double selectedStartTime = selectionController()->dataSelectedStartTime();
 
     if (selectedStartTime < 0) {
         return make_ret(Ret::Code::NotSupported);
@@ -1528,7 +1529,7 @@ muse::Ret TrackeditActionsController::pasteInsert()
 {
     project::IAudacityProjectPtr project = globalContext()->currentProject();
     auto tracks = project->trackeditProject()->trackList();
-    const double selectedStartTime = playbackState()->playbackPosition();
+    const double selectedStartTime = selectionController()->dataSelectedStartTime();
 
     if (selectedStartTime < 0) {
         return make_ret(Ret::Code::NotSupported);
@@ -1545,7 +1546,7 @@ muse::Ret TrackeditActionsController::pasteInsertRipple()
 {
     project::IAudacityProjectPtr project = globalContext()->currentProject();
     auto tracks = project->trackeditProject()->trackList();
-    const double selectedStartTime = playbackState()->playbackPosition();
+    const double selectedStartTime = selectionController()->dataSelectedStartTime();
 
     if (selectedStartTime < 0) {
         return make_ret(Ret::Code::NotSupported);
@@ -2038,9 +2039,7 @@ muse::Ret TrackeditActionsController::retrieveSelection()
     selectionController()->setDataSelectedStartTime(m_storedSelection->start, true);
     selectionController()->setDataSelectedEndTime(m_storedSelection->end, true);
 
-    // Paste uses the playhead as its insert point (not the selection range).
-    // Park the playhead on the left edge so retrieve → paste matches AU3, where
-    // paste lands at the restored region start — never mid-selection.
+    // Park the playhead on the left edge of the restored range.
     commandDispatcher()->dispatch(playback::PLAYBACK_SEEK_COMMAND, {
         { playback::PLAYBACK_SEEK_TIME_PARAM, Val(m_storedSelection->start) },
         { playback::PLAYBACK_SEEK_TRIGGER_PLAY_PARAM, Val(false) },

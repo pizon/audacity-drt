@@ -91,7 +91,7 @@ private:
     friend class Au3TracksInteractionTests;
 
     au3::Au3Project& projectRef() const;
-    TrackIdList pasteIntoNewTracks(const std::vector<Au3TrackDataPtr>& tracksData);
+    TrackIdList pasteIntoNewTracks(const std::vector<Au3TrackDataPtr>& tracksData, secs_t begin);
     std::shared_ptr<au3::Au3Track> createNewTrackAndPaste(std::shared_ptr<au3::Au3Track> data, au3::Au3TrackList& list, secs_t begin);
     TrackIdList determineDestinationTracksIds(const std::vector<Track>& tracks, const TrackIdList& destinationTrackIds,
                                               const std::vector<Au3TrackDataPtr>& clipboardData, bool forLabels = false) const;

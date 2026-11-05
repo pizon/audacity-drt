@@ -224,7 +224,7 @@ muse::Ret Au3TracksInteraction::paste(const std::vector<ITrackDataPtr>& data, se
 
     TrackIdList selectedTracks = selectionController()->selectedTracks();
     if (selectedTracks.empty()) {
-        const TrackIdList tracksIdsToSelect = pasteIntoNewTracks(copiedData);
+        const TrackIdList tracksIdsToSelect = pasteIntoNewTracks(copiedData, begin);
         selectionController()->setSelectedTracks(tracksIdsToSelect);
         trackNavigationController()->setFocus(TrackFocus::track(tracksIdsToSelect.front()));
         projectWasModified = true;
@@ -405,7 +405,7 @@ muse::Ret Au3TracksInteraction::pasteClips(const std::vector<Au3TrackDataPtr>& c
     if (newTracksNeeded) {
         // remove already pasted elements from the clipboard and paste the rest into the new tracks
         std::vector<Au3TrackDataPtr> remainingData(copiedData.begin() + dstTracksIds.size(), copiedData.end());
-        const auto tracksIdsToSelect = pasteIntoNewTracks(remainingData);
+        const auto tracksIdsToSelect = pasteIntoNewTracks(remainingData, begin);
         TrackIdList allDstTracksIds = dstTracksIds;
         allDstTracksIds.insert(allDstTracksIds.end(), tracksIdsToSelect.begin(), tracksIdsToSelect.end());
 
@@ -464,7 +464,7 @@ muse::Ret Au3TracksInteraction::pasteLabels(const std::vector<Au3TrackDataPtr>& 
     if (newTracksNeeded) {
         // remove already pasted elements from the clipboard and paste the rest into the new tracks
         std::vector<Au3TrackDataPtr> remainingData(copiedData.begin() + dstTracksIds.size(), copiedData.end());
-        const auto tracksIdsToSelect = pasteIntoNewTracks(remainingData);
+        const auto tracksIdsToSelect = pasteIntoNewTracks(remainingData, begin);
         TrackIdList allDstTracksIds = dstTracksIds;
         allDstTracksIds.insert(allDstTracksIds.end(), tracksIdsToSelect.begin(), tracksIdsToSelect.end());
 
@@ -1498,18 +1498,17 @@ void Au3TracksInteraction::removeDragAddedTracks(size_t numTracksWhenDragStarted
     }
 }
 
-TrackIdList Au3TracksInteraction::pasteIntoNewTracks(const std::vector<Au3TrackDataPtr>& tracksData)
+TrackIdList Au3TracksInteraction::pasteIntoNewTracks(const std::vector<Au3TrackDataPtr>& tracksData, secs_t begin)
 {
     auto& project = projectRef();
     auto& tracks = Au3TrackList::Get(project);
     auto prj = globalContext()->currentTrackeditProject();
-    const muse::secs_t selectedStartTime = playbackState()->playbackPosition();
 
     TrackIdList tracksIdsPastedInto;
 
     Au3Track* pFirstNewTrack = nullptr;
     for (const auto& data : tracksData) {
-        auto pNewTrack = createNewTrackAndPaste(data->track(), tracks, selectedStartTime);
+        auto pNewTrack = createNewTrackAndPaste(data->track(), tracks, begin);
         if (!pFirstNewTrack) {
             pFirstNewTrack = pNewTrack.get();
         }
