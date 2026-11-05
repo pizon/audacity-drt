@@ -4,6 +4,8 @@ Podman-based Fedora 44 build and packaging for this fork.
 
 Kept under `drt-build/` so Containerfiles, scripts, and local patches stay out of Audacity’s own `src/` tree while still living in the fork repository.
 
+Release notes for DRT features and AppImage builds: [CHANGELOG.md](CHANGELOG.md).
+
 ## Layout
 
 | Path | Purpose |
