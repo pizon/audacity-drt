@@ -15,6 +15,7 @@ Kept under `drt-build/` so Containerfiles, scripts, and local patches stay out o
 | `run.sh` / `run-podman.sh` | Run the installed binary on the host or in the container |
 | `shell.sh` | Interactive shell in the build container |
 | `patches/` | DRT feature patches that can be applied to upstream |
+| `configs/shortcuts.xml` | Full copy of the DRT default keymap (see `patches/KEYBINDS.md`) |
 
 ## Quick start
 
@@ -39,6 +40,7 @@ From a clean Audacity 4.x checkout:
 
 ```bash
 git apply /path/to/audacity-drt/drt-build/patches/0001-select-region-store-retrieve-selection.patch
+git apply /path/to/audacity-drt/drt-build/patches/0002-restore-audacity-3.7.9-default-shortcuts.patch
 ```
 
-These are plain `git diff` patches; use `git apply` (not `git am`).
+These are plain `git diff` patches; use `git apply` (not `git am`). Details for each patch live under `patches/`, including [patches/KEYBINDS.md](patches/KEYBINDS.md) for the shortcut remaps.
