@@ -10,6 +10,7 @@ AppImage builds are named `audacity-linux-4.0.2-drt-N.AppImage` (`N` from `.appi
 ### Fixed
 
 - **Paste inserts at the selection start**, not the playhead. Matches cut/delete and keeps L/R mono tracks aligned after a stereo split. Patch: `patches/0003-paste-at-selection-start.patch`.
+- **Log-scale spectrogram ruler shows a usable scale.** Ticks fall on every decade (majors at 1, 2, 5 × 10ⁿ, minors at the other digits) instead of linear 5000 Hz steps, and label thinning keeps the roundest labels that fit, so short multi-view channels no longer drop to two or three labels. Patch: `patches/0004-log-scale-spectrogram-ruler-ticks.patch`.
 
 ## [drt-3] - 2026-11-05
 

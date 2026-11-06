@@ -44,6 +44,7 @@ From a clean Audacity 4.x checkout:
 git apply /path/to/audacity-drt/drt-build/patches/0001-select-region-store-retrieve-selection.patch
 git apply /path/to/audacity-drt/drt-build/patches/0002-restore-audacity-3.7.9-default-shortcuts.patch
 git apply /path/to/audacity-drt/drt-build/patches/0003-paste-at-selection-start.patch
+git apply /path/to/audacity-drt/drt-build/patches/0004-log-scale-spectrogram-ruler-ticks.patch
 ```
 
 These are plain `git diff` patches; use `git apply` (not `git am`). Details for each patch live under `patches/`, including [patches/KEYBINDS.md](patches/KEYBINDS.md) for the shortcut remaps.

@@ -8,6 +8,7 @@
 #include <QString>
 
 #include <algorithm>
+#include <cmath>
 
 namespace au {
 namespace {
@@ -25,19 +26,25 @@ std::string valueToLabel(double value, int decimalDigits)
     }
 }
 
-bool mustBeRemoved(const shared::AxisTick& tick, const shared::AxisTick& prevTick, const shared::AxisTick* nextTick, double minDistance)
+// Higher is rounder: 1 * 10^n, then 5 * 10^n, then 2 * 10^n, then anything else.
+int roundness(double value)
 {
-    const auto distanceToPrev = std::abs(tick.position - prevTick.position);
-    if (distanceToPrev < minDistance) {
-        return true;
+    value = std::abs(value);
+    if (value == 0) {
+        return 3;
     }
-    if (nextTick) {
-        const auto distanceToNext = std::abs(nextTick->position - tick.position);
-        if (distanceToNext < minDistance) {
-            return true;
-        }
+    const auto mantissa = value / std::pow(10., std::floor(std::log10(value)));
+    const auto isMantissa = [mantissa](double m) { return std::abs(mantissa - m) < 1e-6 * m; };
+    if (isMantissa(1) || isMantissa(10)) {
+        return 3;
     }
-    return false;
+    if (isMantissa(5)) {
+        return 2;
+    }
+    if (isMantissa(2)) {
+        return 1;
+    }
+    return 0;
 }
 
 struct TickAndIndex {
@@ -48,21 +55,47 @@ struct TickAndIndex {
 void removeOverlappingTicks(std::vector<TickAndIndex>& ticks, double labelSize, double axisSize)
 {
     if (ticks.size() <= 1) {
-        // Nothing to do
-    } else if (ticks.size() == 2 && mustBeRemoved(ticks[1].tick, ticks[0].tick, nullptr, labelSize / axisSize)) {
-        // Special case: the last tick may be removed.
-        ticks.pop_back();
-    } else {
-        // First and last ticks must be kept.
-        auto it = ticks.begin() + 1;
-        while (it != ticks.end() - 1) {
-            if (mustBeRemoved(it->tick, (it - 1)->tick, &((it + 1)->tick), labelSize / axisSize)) {
-                it = ticks.erase(it);
-            } else {
-                ++it;
-            }
+        return;
+    }
+
+    const auto minDistance = labelSize / axisSize;
+    // The labels of the first and last ticks are kept inside the axis rather than centered on their tick,
+    // so they need an extra half label of clearance.
+    const auto minDistanceToEnd = minDistance * 1.5;
+
+    const TickAndIndex first = ticks.front();
+    const TickAndIndex last = ticks.back();
+    const auto lastFits = std::abs(last.tick.position - first.tick.position) >= minDistance;
+
+    // Rounder values get the first pick of the free space.
+    std::vector<TickAndIndex> candidates(ticks.begin() + 1, ticks.end() - 1);
+    std::stable_sort(candidates.begin(), candidates.end(), [](const TickAndIndex& a, const TickAndIndex& b) {
+        return roundness(a.tick.val) > roundness(b.tick.val);
+    });
+
+    std::vector<TickAndIndex> kept;
+    for (const auto& candidate : candidates) {
+        const auto pos = candidate.tick.position;
+        if (std::abs(pos - first.tick.position) < minDistanceToEnd
+            || (lastFits && std::abs(last.tick.position - pos) < minDistanceToEnd)) {
+            continue;
+        }
+        const auto overlaps = std::any_of(kept.begin(), kept.end(), [pos, minDistance](const TickAndIndex& k) {
+            return std::abs(k.tick.position - pos) < minDistance;
+        });
+        if (!overlaps) {
+            kept.push_back(candidate);
         }
     }
+
+    kept.push_back(first);
+    if (lastFits) {
+        kept.push_back(last);
+    }
+    std::sort(kept.begin(), kept.end(), [](const TickAndIndex& a, const TickAndIndex& b) {
+        return a.tick.position < b.tick.position;
+    });
+    ticks = std::move(kept);
 }
 }
 

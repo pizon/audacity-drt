@@ -1,0 +1,334 @@
+Log-scale spectrogram ruler ticks
+
+The spectrogram ruler showed only a few labels (e.g. 20Hz, 5000Hz, 20kHz)
+on a logarithmic scale, worst on short multi-view channels. Two causes:
+
+- shared::axisTicks() used linear steps (every 5000 Hz) for every scale,
+  so on a log axis the ticks bunched up near the top. Log scale now ticks
+  at m * 10^n: majors at 1, 2, 5; minors at the other digits. Ranges
+  narrower than a decade still use linear steps, which are denser there.
+- removeOverlappingTicks() dropped a label if it was close to either
+  neighbor, even neighbors that were themselves dropped, so dense tick
+  sets lost almost every label. It now keeps the end labels, then
+  places the rest roundest value first (1, 5, 2 x 10^n), checking only
+  against labels already kept. End labels get an extra half label of
+  clearance because the ruler pins them inside the axis.
+
+Includes unit tests in src/shared/tests/axisticks_tests.cpp.
+
+Apply against an Audacity 4.x tree:
+  git apply 0004-log-scale-spectrogram-ruler-ticks.patch
+
+diff --git a/src/shared/axis/axislabel.cpp b/src/shared/axis/axislabel.cpp
+index e69339380b..1f07cc5b74 100644
+--- a/src/shared/axis/axislabel.cpp
++++ b/src/shared/axis/axislabel.cpp
+@@ -8,6 +8,7 @@
+ #include <QString>
+ 
+ #include <algorithm>
++#include <cmath>
+ 
+ namespace au {
+ namespace {
+@@ -25,19 +26,25 @@ std::string valueToLabel(double value, int decimalDigits)
+     }
+ }
+ 
+-bool mustBeRemoved(const shared::AxisTick& tick, const shared::AxisTick& prevTick, const shared::AxisTick* nextTick, double minDistance)
++// Higher is rounder: 1 * 10^n, then 5 * 10^n, then 2 * 10^n, then anything else.
++int roundness(double value)
+ {
+-    const auto distanceToPrev = std::abs(tick.position - prevTick.position);
+-    if (distanceToPrev < minDistance) {
+-        return true;
++    value = std::abs(value);
++    if (value == 0) {
++        return 3;
+     }
+-    if (nextTick) {
+-        const auto distanceToNext = std::abs(nextTick->position - tick.position);
+-        if (distanceToNext < minDistance) {
+-            return true;
+-        }
++    const auto mantissa = value / std::pow(10., std::floor(std::log10(value)));
++    const auto isMantissa = [mantissa](double m) { return std::abs(mantissa - m) < 1e-6 * m; };
++    if (isMantissa(1) || isMantissa(10)) {
++        return 3;
++    }
++    if (isMantissa(5)) {
++        return 2;
+     }
+-    return false;
++    if (isMantissa(2)) {
++        return 1;
++    }
++    return 0;
+ }
+ 
+ struct TickAndIndex {
+@@ -48,21 +55,47 @@ struct TickAndIndex {
+ void removeOverlappingTicks(std::vector<TickAndIndex>& ticks, double labelSize, double axisSize)
+ {
+     if (ticks.size() <= 1) {
+-        // Nothing to do
+-    } else if (ticks.size() == 2 && mustBeRemoved(ticks[1].tick, ticks[0].tick, nullptr, labelSize / axisSize)) {
+-        // Special case: the last tick may be removed.
+-        ticks.pop_back();
+-    } else {
+-        // First and last ticks must be kept.
+-        auto it = ticks.begin() + 1;
+-        while (it != ticks.end() - 1) {
+-            if (mustBeRemoved(it->tick, (it - 1)->tick, &((it + 1)->tick), labelSize / axisSize)) {
+-                it = ticks.erase(it);
+-            } else {
+-                ++it;
+-            }
++        return;
++    }
++
++    const auto minDistance = labelSize / axisSize;
++    // The labels of the first and last ticks are kept inside the axis rather than centered on their tick,
++    // so they need an extra half label of clearance.
++    const auto minDistanceToEnd = minDistance * 1.5;
++
++    const TickAndIndex first = ticks.front();
++    const TickAndIndex last = ticks.back();
++    const auto lastFits = std::abs(last.tick.position - first.tick.position) >= minDistance;
++
++    // Rounder values get the first pick of the free space.
++    std::vector<TickAndIndex> candidates(ticks.begin() + 1, ticks.end() - 1);
++    std::stable_sort(candidates.begin(), candidates.end(), [](const TickAndIndex& a, const TickAndIndex& b) {
++        return roundness(a.tick.val) > roundness(b.tick.val);
++    });
++
++    std::vector<TickAndIndex> kept;
++    for (const auto& candidate : candidates) {
++        const auto pos = candidate.tick.position;
++        if (std::abs(pos - first.tick.position) < minDistanceToEnd
++            || (lastFits && std::abs(last.tick.position - pos) < minDistanceToEnd)) {
++            continue;
++        }
++        const auto overlaps = std::any_of(kept.begin(), kept.end(), [pos, minDistance](const TickAndIndex& k) {
++            return std::abs(k.tick.position - pos) < minDistance;
++        });
++        if (!overlaps) {
++            kept.push_back(candidate);
+         }
+     }
++
++    kept.push_back(first);
++    if (lastFits) {
++        kept.push_back(last);
++    }
++    std::sort(kept.begin(), kept.end(), [](const TickAndIndex& a, const TickAndIndex& b) {
++        return a.tick.position < b.tick.position;
++    });
++    ticks = std::move(kept);
+ }
+ }
+ 
+diff --git a/src/shared/axis/axisticks.cpp b/src/shared/axis/axisticks.cpp
+index dbf2c1424f..142907bb98 100644
+--- a/src/shared/axis/axisticks.cpp
++++ b/src/shared/axis/axisticks.cpp
+@@ -48,24 +48,32 @@ std::vector<shared::AxisTick> toTicks(const std::vector<double>& values, const s
+     return ticks;
+ }
+ 
+-std::vector<shared::AxisTick> getTicks(double min, double max, shared::AxisScale scale, const shared::NumberScale& numberScale, double step)
++bool containsValue(const std::vector<double>& values, double value)
+ {
+-    const std::vector<double> values = getTicksValues(max, min, step, scale);
+-    return toTicks(values, numberScale);
+-}
++    return std::any_of(values.begin(), values.end(), [value](double v) { return muse::is_equal(v, value); });
+ }
+ 
+-shared::AxisTicks shared::axisTicks(double min, double max, AxisScale scale)
++// Ensures min and max are major bookends, and that no minor tick duplicates a major one.
++shared::AxisTicks makeAxisTicks(std::vector<double> majorValues, std::vector<double> minorValues, double min, double max,
++                                const shared::NumberScale& numberScale)
+ {
+-    const auto range = max - min;
+-    if (range <= 0) {
+-        LOGE() << "Invalid range: " << range;
+-        return {};
++    if (!containsValue(majorValues, max)) {
++        majorValues.push_back(max);
++    }
++    if (!containsValue(majorValues, min)) {
++        majorValues.push_back(min);
+     }
++    minorValues.erase(std::remove_if(minorValues.begin(), minorValues.end(), [&majorValues](double minorValue) {
++        return containsValue(majorValues, minorValue);
++    }),
++                      minorValues.end());
+ 
+-    const auto safeMin = scale == AxisScale::Logarithmic ? std::max(min, 1e-6) : min;
+-    const auto numberScale = NumberScale{ scale, safeMin, max };
++    return { toTicks(majorValues, numberScale), toTicks(minorValues, numberScale) };
++}
+ 
++shared::AxisTicks steppedAxisTicks(double min, double max, shared::AxisScale scale, const shared::NumberScale& numberScale)
++{
++    const auto range = max - min;
+     auto minorPerMajor = 10;
+ 
+     auto majorStep = std::pow(10, std::floor(std::log10(range)));
+@@ -74,32 +82,59 @@ shared::AxisTicks shared::axisTicks(double min, double max, AxisScale scale)
+     }
+     // Too sparse major ticks don't look good. Double the rate of major ticks,
+     // but preserve 10 steps per decade.
+-    if (range / majorStep < kMinMajorTicks) {
++    if (range / majorStep < shared::kMinMajorTicks) {
+         majorStep /= 2;
+         minorPerMajor = 5;
+     }
+ 
+-    // Major ticks: ensure min and max are bookends, on top of the on-grid values.
+-    auto majorValues = getTicksValues(max, safeMin, majorStep, scale);
+-    if (majorValues.empty() || !muse::is_equal(majorValues.front(), max)) {
+-        majorValues.insert(majorValues.begin(), max);
++    const auto minorStep = majorStep / minorPerMajor;
++    return makeAxisTicks(getTicksValues(max, min, majorStep, scale), getTicksValues(max, min, minorStep, scale), min, max,
++                         numberScale);
++}
++
++// Ticks at every digit of every decade, i.e. m * 10^e for m in [1, 9], which are evenly spread on a log axis.
++// 1, 2 and 5 are majors; the other digits are minors.
++shared::AxisTicks decadeAxisTicks(double min, double max, const shared::NumberScale& numberScale)
++{
++    std::vector<double> majorValues;
++    std::vector<double> minorValues;
++    for (auto exponent = std::floor(std::log10(min)); ; ++exponent) {
++        const auto decade = std::pow(10., exponent);
++        if (decade > max) {
++            break;
++        }
++        for (auto mantissa = 1; mantissa <= 9; ++mantissa) {
++            const auto value = mantissa * decade;
++            if (value < min || value > max) {
++                continue;
++            }
++            const auto isMajor = mantissa == 1 || mantissa == 2 || mantissa == 5;
++            (isMajor ? majorValues : minorValues).push_back(value);
++        }
+     }
+-    if (!muse::is_equal(majorValues.back(), safeMin)) {
+-        majorValues.push_back(safeMin);
++    return makeAxisTicks(std::move(majorValues), std::move(minorValues), min, max, numberScale);
++}
++}
++
++shared::AxisTicks shared::axisTicks(double min, double max, AxisScale scale)
++{
++    const auto range = max - min;
++    if (range <= 0) {
++        LOGE() << "Invalid range: " << range;
++        return {};
+     }
+-    const std::vector<AxisTick> majorTicks = toTicks(majorValues, numberScale);
+ 
+-    const auto minorStep = majorStep / minorPerMajor;
+-    std::vector<AxisTick> minorTicks = getTicks(safeMin, max, scale, numberScale, minorStep);
++    const auto safeMin = scale == AxisScale::Logarithmic ? std::max(min, 1e-6) : min;
++    const auto numberScale = NumberScale{ scale, safeMin, max };
+ 
+-    // Remove minor ticks that overlap with major ticks.
+-    minorTicks.erase(std::remove_if(minorTicks.begin(), minorTicks.end(), [&majorTicks](const AxisTick& minorTick) {
+-        return std::any_of(majorTicks.begin(), majorTicks.end(), [&minorTick](const AxisTick& majorTick) {
+-            return muse::is_equal(minorTick.val, majorTick.val);
+-        });
+-    }),
+-                     minorTicks.end());
++    if (scale == AxisScale::Logarithmic) {
++        // When zoomed in to a fraction of a decade, the log axis is close to linear, and stepped ticks are denser.
++        auto ticks = decadeAxisTicks(safeMin, max, numberScale);
++        if (ticks.major.size() >= static_cast<size_t>(kMinMajorTicks)) {
++            return ticks;
++        }
++    }
+ 
+-    return { majorTicks, minorTicks };
++    return steppedAxisTicks(safeMin, max, scale, numberScale);
+ }
+ }
+diff --git a/src/shared/tests/axisticks_tests.cpp b/src/shared/tests/axisticks_tests.cpp
+index f32c154a55..5b40d4fedd 100644
+--- a/src/shared/tests/axisticks_tests.cpp
++++ b/src/shared/tests/axisticks_tests.cpp
+@@ -1,6 +1,7 @@
+ /*
+  * Audacity: A Digital Audio Editor
+  */
++#include "shared/axis/axislabel.h"
+ #include "shared/axis/axisticks.h"
+ 
+ #include "framework/global/types/number.h"
+@@ -54,6 +55,65 @@ TEST(axisTicks, real_world_cases)
+     }
+ }
+ 
++namespace {
++bool containsTick(const std::vector<AxisTick>& ticks, double val)
++{
++    return std::any_of(ticks.begin(), ticks.end(), [val](const AxisTick& tick) { return muse::is_equal(tick.val, val); });
++}
++}
++
++TEST(axisTicks, logarithmic_scale_ticks_every_decade)
++{
++    constexpr auto min = 20.0;
++    constexpr auto max = 20000.0;
++    const AxisTicks ticks = axisTicks(min, max, AxisScale::Logarithmic);
++
++    for (const auto freq : { 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0 }) {
++        EXPECT_TRUE(containsTick(ticks.major, freq)) << "Expected major tick at " << freq;
++    }
++    for (const auto freq : { 30.0, 300.0, 3000.0, 9000.0 }) {
++        EXPECT_TRUE(containsTick(ticks.minor, freq)) << "Expected minor tick at " << freq;
++    }
++    for (const auto& tick : ticks.minor) {
++        EXPECT_FALSE(containsTick(ticks.major, tick.val)) << "Minor tick duplicates major tick at " << tick.val;
++    }
++}
++
++TEST(axisTicks, logarithmic_scale_zoomed_within_a_decade)
++{
++    const AxisTicks ticks = axisTicks(1000.0, 3000.0, AxisScale::Logarithmic);
++    EXPECT_GE(ticks.major.size(), kMinMajorTicks);
++    EXPECT_TRUE(containsTick(ticks.major, 1500.0));
++    EXPECT_TRUE(containsTick(ticks.major, 2500.0));
++}
++
++TEST(labelsForTicks, short_logarithmic_axis_keeps_round_labels)
++{
++    // A spectrogram channel of a multi-view track: short axis, 3 decades.
++    constexpr auto labelHeight = 16.0;
++    constexpr auto channelHeight = 120.0;
++    const AxisTicks ticks = axisTicks(20.0, 20000.0, AxisScale::Logarithmic);
++    const auto labels = labelsForTicks(ticks.major, labelHeight, channelHeight);
++    ASSERT_EQ(labels.size(), ticks.major.size());
++
++    std::vector<AxisTick> labelled;
++    for (size_t i = 0; i < labels.size(); ++i) {
++        if (!labels[i].empty()) {
++            labelled.push_back(ticks.major[i]);
++        }
++    }
++
++    EXPECT_GE(labelled.size(), 4u);
++    EXPECT_TRUE(containsTick(labelled, 20.0));
++    EXPECT_TRUE(containsTick(labelled, 20000.0));
++    EXPECT_TRUE(containsTick(labelled, 100.0));
++    EXPECT_TRUE(containsTick(labelled, 1000.0));
++
++    for (size_t i = 1; i < labelled.size(); ++i) {
++        EXPECT_GE(labelled[i].position - labelled[i - 1].position, labelHeight / channelHeight - 1e-9);
++    }
++}
++
+ TEST(axisTicks, normalized_scales_are_supported) {
+     constexpr auto min = 0.0;
+     constexpr auto max = 1.0;
