@@ -277,3 +277,7 @@ CMakeUserPresets.json
 
 .claude/settings.local.json
 _deps/
+
+# DRT AppImage packaging output
+/dist/
+/PREFIX.txt
