@@ -7,6 +7,39 @@ AppImage builds are named `audacity-linux-4.0.2-drt-N.AppImage` (`N` from `.appi
 
 ## [Unreleased]
 
+## [drt-11] - 2026-11-11
+
+Based on Audacity `release-4.0.2` / fork `master`.
+
+### Fixed
+
+- **Dialogs open at their real size again.** A deferred Muse `WindowView` resize cleared min/max and applied size on a timer. That left other modals too small until they were maximized. The timer is gone; dialogs take their size when they open.
+- **Export audio grows with its content.** The dialog stays resizable, and `BaseSection` reports the height of its rows so the extra “one file per label” lines no longer paint over Cancel and Export.
+
+### Changed
+
+- **Fullscreen File menu placement on Wayland.** Muse popups use the parent window’s scene position and skip `setScreen()` onto the reported output. Native Wayland still invents global coordinates; this is the trade-off kept in place of forcing X11.
+
+## [drt-10] - 2026-11-11
+
+Based on Audacity `release-4.0.2` / fork `master`.
+
+### Changed
+
+- Further export-dialog and fullscreen-menu placement attempts on Wayland. Superseded by drt-11.
+
+## [drt-9] - 2026-11-11
+
+Based on Audacity `release-4.0.2` / fork `master`.
+
+### Changed
+
+- Deferred Muse dialog resize so the export window could grow after open. That path sized other modals wrong and was removed in drt-11.
+
+## [drt-8] - 2026-11-11
+
+Based on Audacity `release-4.0.2` / fork `master`.
+
 ### Fixed
 
 - **Stop GNOME’s launch-feedback busy cursor.** The desktop entry sets `StartupNotify=false`. On Wayland, Qt never completes that notification, so the shell kept the watch cursor up while it still considered the app to be starting.

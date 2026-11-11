@@ -37,6 +37,9 @@ StyledDialogView {
     onOpened: Qt.callLater(fitContent)
 
     modal: true
+    // The dialog grows when "one file per label" adds rows. Leaving it
+    // resizable keeps that taller size from being locked out.
+    resizable: true
 
     property int dropdownWidth: 358
     property int smallDropdownWidth: 364 * 0.65
@@ -689,7 +692,8 @@ StyledDialogView {
         }
 
         SeparatorLine {
-            Layout.margins: -root.margins
+            Layout.leftMargin: -root.margins
+            Layout.rightMargin: -root.margins
             width: root.contentWidth + 2 * root.margins
         }
 

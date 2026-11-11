@@ -43,5 +43,15 @@ Column {
         id: sectionContent
         width: parent.width
         spacing: root.rowSpacing
+        // Rows are placed by this column, but the column's own height stayed
+        // at the title. The extra rows then painted over the dialog buttons.
+        height: childrenRect.height
+    }
+
+    onChildrenRectChanged: {
+        const next = Math.ceil(childrenRect.height)
+        if (implicitHeight !== next) {
+            implicitHeight = next
+        }
     }
 }
