@@ -543,12 +543,12 @@ const UiActionList ProjectUiActions::m_actions = {
              TranslatableString("action_description", "Contrast analyzer")
              ),
     UiAction("plot-spectrum",
-             au::context::UiCtxUnknown,
-             au::context::CTX_ANY,
+             au::context::UiCtxProjectOpened,
+             au::context::CTX_PROJECT_OPENED,
              //: Action title: shown as a menu item or a button label; keep it short
-             TranslatableString("action", "Plot spectrum"),
+             TranslatableString("action", "Plot spectrum..."),
              //: Action description: shown as a tooltip; can be a full sentence
-             TranslatableString("action_description", "Plot spectrum")
+             TranslatableString("action_description", "Plot the spectrum of the selected audio")
              ),
 
     // tools menu

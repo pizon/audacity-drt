@@ -5,6 +5,7 @@
 
 #include <string>
 
+#include "framework/global/types/uri.h"
 #include "framework/rcommand/commandtypes.h"
 
 namespace au::project {
@@ -33,6 +34,9 @@ inline static const muse::rcommand::Command PROJECT_EXPORT_MIDI_COMMAND("command
 inline static const muse::rcommand::Command PROJECT_OPEN_METADATA_DIALOG_COMMAND("command://project/open-metadata-dialog");
 inline static const muse::rcommand::Command PROJECT_OPEN_CUSTOM_FFMPEG_OPTIONS_COMMAND("command://project/open-custom-ffmpeg-options");
 inline static const muse::rcommand::Command PROJECT_OPEN_CUSTOM_MAPPING_COMMAND("command://project/open-custom-mapping");
+inline static const muse::rcommand::Command PROJECT_PLOT_SPECTRUM_COMMAND("command://project/plot-spectrum");
+
+inline static const muse::Uri PLOT_SPECTRUM_URI("audacity://project/plot-spectrum");
 
 inline static const std::string PROJECT_URL_PARAM("url");
 inline static const std::string PROJECT_DISPLAY_NAME_PARAM("displayName");

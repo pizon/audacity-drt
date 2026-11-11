@@ -1,6 +1,7 @@
 module Audacity.Project
 ProjectsPage 1.0 ProjectsPage.qml
 NewProjectDialog 1.0 NewProjectDialog.qml
+PlotSpectrumDialog 1.0 PlotSpectrumDialog.qml
 AskLocationTypeDialog 1.0 AskLocationTypeDialog.qml
 ProjectPropertiesDialog 1.0 ProjectPropertiesDialog.qml
 AudioGenerationSettings 1.0 AudioGenerationSettings.qml

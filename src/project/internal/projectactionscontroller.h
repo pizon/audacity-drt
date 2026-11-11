@@ -21,6 +21,7 @@
 #include "iopensaveprojectscenario.h"
 #include "framework/toast/itoastservice.h"
 #include "trackedit/iprojecthistory.h"
+#include "trackedit/iselectioncontroller.h"
 #include "record/irecordcontroller.h"
 #include "importexport/export/internal/exportconfiguration.h"
 #include "importexport/import/iimporter.h"
@@ -56,6 +57,7 @@ class ProjectActionsController : public IProjectFilesController, public muse::ac
     muse::ContextInject<muse::IInteractive> interactive { this };
     muse::ContextInject<IOpenSaveProjectScenario> openSaveProjectScenario { this };
     muse::ContextInject<trackedit::IProjectHistory> projectHistory { this };
+    muse::ContextInject<trackedit::ISelectionController> selectionController { this };
     muse::ContextInject<record::IRecordController> recordController { this };
     muse::ContextInject<importexport::IImporter> importer { this };
     muse::ContextInject<au3cloud::IAu3AudioComService> audioComService { this };
@@ -148,11 +150,14 @@ private:
     muse::Ret openCustomFFmpegOptions();
     muse::Ret openMetadataDialog();
     muse::Ret openCustomMapping();
+    muse::Ret openPlotSpectrum();
 
     muse::Ret ensureAuthorization();
 
     void listenTrackeditProjectChanges();
     void listenCloudProjectChanges();
+    void listenSelectionChanges();
+    bool canPlotSpectrum() const;
 
     bool m_isProjectSaving = false;
     bool m_isProjectClosing = false;

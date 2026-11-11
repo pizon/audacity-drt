@@ -2,6 +2,7 @@
     <qresource prefix="/">
         <file>qml/Audacity/Project/qmldir</file>
         <file>qml/Audacity/Project/NewProjectDialog.qml</file>
+        <file>qml/Audacity/Project/PlotSpectrumDialog.qml</file>
         <file>qml/Audacity/Project/ProjectsPage.qml</file>
         <file>qml/Audacity/Project/internal/ProjectsPage/ProjectGridItem.qml</file>
         <file>qml/Audacity/Project/internal/ProjectsPage/ProjectListItem.qml</file>

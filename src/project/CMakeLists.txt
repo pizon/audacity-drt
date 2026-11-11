@@ -123,6 +123,11 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/view/newprojectmodel.h
     ${CMAKE_CURRENT_LIST_DIR}/view/projectpropertiesmodel.cpp
     ${CMAKE_CURRENT_LIST_DIR}/view/projectpropertiesmodel.h
+
+    ${CMAKE_CURRENT_LIST_DIR}/view/plotspectrum/plotspectrumanalyzer.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/view/plotspectrum/plotspectrumanalyzer.h
+    ${CMAKE_CURRENT_LIST_DIR}/view/plotspectrum/plotspectrummodel.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/view/plotspectrum/plotspectrummodel.h
 )
 
 # TODO: Warnings suppression. Remove once all functionality is implemented
@@ -146,9 +151,17 @@ endif()
 set(MODULE_LINK
         au3wrap
         au3-tags
+        au3-builtin-effects
+        au3-fft
+        au3-math
+        au3-project
+        au3-project-rate
+        au3-preferences
         Qt::Widgets
         Qt::Quick
 )
+
+set(MODULE_LINK_PUBLIC shared)
 
 if (QT_ADD_CONCURRENT)
     list(APPEND MODULE_LINK

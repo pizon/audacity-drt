@@ -212,6 +212,15 @@ const std::vector<CommandInfo> commandInfos = {
         InputSchema(),
         Decoration()
     },
+    CommandInfo{
+        PROJECT_PLOT_SPECTRUM_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Plot spectrum"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Plot the spectrum of the selected audio"),
+        InputSchema(),
+        Decoration()
+    },
 };
 }
 

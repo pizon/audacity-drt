@@ -259,6 +259,7 @@ void ProjectActionsController::init()
     cd->onRequest(this, PROJECT_OPEN_METADATA_DIALOG_COMMAND, [this]() { return openMetadataDialog(); });
     cd->onRequest(this, PROJECT_OPEN_CUSTOM_FFMPEG_OPTIONS_COMMAND, [this]() { return openCustomFFmpegOptions(); });
     cd->onRequest(this, PROJECT_OPEN_CUSTOM_MAPPING_COMMAND, [this]() { return openCustomMapping(); });
+    cd->onRequest(this, PROJECT_PLOT_SPECTRUM_COMMAND, [this]() { return openPlotSpectrum(); });
 
     static const std::vector<ActionToCommand> actionToCommand = {
         { "file-new", PROJECT_NEW_COMMAND, {} },
@@ -283,6 +284,7 @@ void ProjectActionsController::init()
         { OPEN_METADATA_DIALOG, PROJECT_OPEN_METADATA_DIALOG_COMMAND, {} },
         { OPEN_CUSTOM_FFMPEG_OPTIONS, PROJECT_OPEN_CUSTOM_FFMPEG_OPTIONS_COMMAND, {} },
         { OPEN_CUSTOM_MAPPING, PROJECT_OPEN_CUSTOM_MAPPING_COMMAND, {} },
+        { "plot-spectrum", PROJECT_PLOT_SPECTRUM_COMMAND, {} },
     };
 
     registerActionToCommand(this, actionToCommand, commandDispatcher(), dispatcher());
@@ -290,13 +292,16 @@ void ProjectActionsController::init()
     globalContext()->currentTrackeditProjectChanged().onNotify(this, [this]() {
         listenTrackeditProjectChanges();
         listenCloudProjectChanges();
+        listenSelectionChanges();
     });
 
     listenTrackeditProjectChanges();
     listenCloudProjectChanges();
+    listenSelectionChanges();
 
     recordController()->isRecordingChanged().onNotify(this, [this]() {
         m_actionEnabledChanged.send(prohibitedWhileRecording());
+        m_actionEnabledChanged.send({ "plot-spectrum" });
     });
 }
 
@@ -359,6 +364,10 @@ bool ProjectActionsController::canReceiveAction(const muse::actions::ActionCode&
     }
 
     if (muse::contains(prohibitedWhileRecording(), code) && recordController()->isRecording()) {
+        return false;
+    }
+
+    if (code == "plot-spectrum" && !canPlotSpectrum()) {
         return false;
     }
 
@@ -1847,6 +1856,52 @@ muse::Ret ProjectActionsController::openMetadataDialog()
 {
     interactive()->open(METADATA_DIALOG_URI);
     return make_ok();
+}
+
+muse::Ret ProjectActionsController::openPlotSpectrum()
+{
+    if (!canPlotSpectrum()) {
+        return muse::make_ret(muse::Ret::Code::NotSupported);
+    }
+
+    interactive()->open(PLOT_SPECTRUM_URI);
+    return make_ok();
+}
+
+bool ProjectActionsController::canPlotSpectrum() const
+{
+    if (!currentProject() || recordController()->isRecording()) {
+        return false;
+    }
+
+    const auto selection = selectionController();
+    if (!selection) {
+        return false;
+    }
+
+    return !selection->timeSelectionIsEmpty() && selection->timeSelectionHasAudioData();
+}
+
+void ProjectActionsController::listenSelectionChanges()
+{
+    const auto selection = selectionController();
+    if (!selection) {
+        return;
+    }
+
+    selection->dataSelectedStartTimeChanged().onReceive(this, [this](trackedit::secs_t) {
+        m_actionEnabledChanged.send({ "plot-spectrum" });
+    }, muse::async::Asyncable::Mode::SetReplace);
+
+    selection->dataSelectedEndTimeChanged().onReceive(this, [this](trackedit::secs_t) {
+        m_actionEnabledChanged.send({ "plot-spectrum" });
+    }, muse::async::Asyncable::Mode::SetReplace);
+
+    selection->selectedTracksChanged().onReceive(this, [this](const trackedit::TrackIdList&) {
+        m_actionEnabledChanged.send({ "plot-spectrum" });
+    }, muse::async::Asyncable::Mode::SetReplace);
+
+    m_actionEnabledChanged.send({ "plot-spectrum" });
 }
 
 muse::Ret ProjectActionsController::openCustomMapping()

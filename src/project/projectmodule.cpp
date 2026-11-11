@@ -48,7 +48,9 @@
 #include "view/thumbnailloader.h"
 #include "view/pixmapprojectthumbnailview.h"
 #include "view/newprojectmodel.h"
+#include "view/plotspectrum/plotspectrummodel.h"
 #include "internal/opensaveprojectscenario.h"
+#include "project/projectcommands.h"
 
 #ifdef Q_OS_MAC
 #include "internal/platform/macos/macosrecentfilescontroller.h"
@@ -97,6 +99,7 @@ void ProjectModule::resolveImports()
         ir->registerQmlUri(muse::Uri("audacity://project/asklocationtype"), "Audacity/Project/AskLocationTypeDialog.qml");
         ir->registerQmlUri(muse::Uri("audacity://project/savetocloud"), "Audacity/Project/SaveToCloudDialog.qml");
         ir->registerQmlUri(muse::Uri("audacity://project/cloudprojectsyncing"), "Audacity/Project/CloudProjectSyncDialog.qml");
+        ir->registerQmlUri(PLOT_SPECTRUM_URI, "Audacity/Project/PlotSpectrumDialog.qml");
     }
 
     auto cr = globalIoc()->resolve<muse::rcommand::ICommandsRegister>(mname);
@@ -124,6 +127,7 @@ void ProjectModule::registerUiTypes()
     qmlRegisterType<PixmapProjectThumbnailView>("Audacity.Project", 1, 0, "PixmapProjectThumbnailView");
     qmlRegisterType<ProjectPropertiesModel>("Audacity.Project", 1, 0, "ProjectPropertiesModel");
     qmlRegisterType<CloudProjectSyncModel>("Audacity.Project", 1, 0, "CloudProjectSyncModel");
+    qmlRegisterType<PlotSpectrumModel>("Audacity.Project", 1, 0, "PlotSpectrumModel");
 
     qmlRegisterUncreatableType<QMLSaveLocationType>("Audacity.Project", 1, 0, "SaveLocationType",
                                                     "Not creatable as it is an enum type");

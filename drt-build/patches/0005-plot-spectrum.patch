@@ -1,0 +1,1655 @@
+Plot Spectrum analyzer (Qt port from Audacity 3.7.9)
+
+Reintroduces Analyze → Plot Spectrum for Audacity 4 / DRT as a Qt/QML
+dialog. Reuses au3 PlotSpectrumBase + SpectrumAnalyst for FFT math,
+and wires the existing plot-spectrum action into the Analyze menu.
+
+Features: spectrum / autocorrelation / cepstrum algorithms, FFT size,
+window function, linear/log axis, grid, zoom/pan, cursor/peak readout,
+replot, and export to spectrum.txt. Prefs use the same
+/FrequencyPlotDialog/* keys as 3.7.9.
+
+Apply against an Audacity 4.x tree:
+  git apply 0005-plot-spectrum.patch
+
+diff --git a/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp b/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp
+index e73e98a0d9..4b96f66367 100644
+--- a/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp
++++ b/src/appshell/qml/Audacity/AppShell/appmenumodel.cpp
+@@ -712,8 +712,8 @@ MenuItemList AppMenuModel::makeAnalyzeItems()
+         makeMenuItem(effects::EFFECTS_PLUGIN_MANAGER_COMMAND),
+         makeSeparator(),
+         // makeMenuItem("contrast-analyzer"),
+-        // makeMenuItem("plot-spectrum"),
+-        // makeSeparator(),
++        makeMenuItem("plot-spectrum"),
++        makeSeparator(),
+     };
+ 
+     const muse::uicomponents::MenuItemList analyzeMenus = effectsMenuProvider()->destructiveEffectMenu(*this,
+diff --git a/src/project/CMakeLists.txt b/src/project/CMakeLists.txt
+index c0b277d539..807c237167 100644
+--- a/src/project/CMakeLists.txt
++++ b/src/project/CMakeLists.txt
+@@ -123,6 +123,11 @@ set(MODULE_SRC
+     ${CMAKE_CURRENT_LIST_DIR}/view/newprojectmodel.h
+     ${CMAKE_CURRENT_LIST_DIR}/view/projectpropertiesmodel.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/view/projectpropertiesmodel.h
++
++    ${CMAKE_CURRENT_LIST_DIR}/view/plotspectrum/plotspectrumanalyzer.cpp
++    ${CMAKE_CURRENT_LIST_DIR}/view/plotspectrum/plotspectrumanalyzer.h
++    ${CMAKE_CURRENT_LIST_DIR}/view/plotspectrum/plotspectrummodel.cpp
++    ${CMAKE_CURRENT_LIST_DIR}/view/plotspectrum/plotspectrummodel.h
+ )
+ 
+ # TODO: Warnings suppression. Remove once all functionality is implemented
+@@ -146,10 +151,18 @@ endif()
+ set(MODULE_LINK
+         au3wrap
+         au3-tags
++        au3-builtin-effects
++        au3-fft
++        au3-math
++        au3-project
++        au3-project-rate
++        au3-preferences
+         Qt::Widgets
+         Qt::Quick
+ )
+ 
++set(MODULE_LINK_PUBLIC shared)
++
+ if (QT_ADD_CONCURRENT)
+     list(APPEND MODULE_LINK
+             Qt::Concurrent
+diff --git a/src/project/internal/projectactionscontroller.cpp b/src/project/internal/projectactionscontroller.cpp
+index bff4f31966..d512801cf2 100644
+--- a/src/project/internal/projectactionscontroller.cpp
++++ b/src/project/internal/projectactionscontroller.cpp
+@@ -259,6 +259,7 @@ void ProjectActionsController::init()
+     cd->onRequest(this, PROJECT_OPEN_METADATA_DIALOG_COMMAND, [this]() { return openMetadataDialog(); });
+     cd->onRequest(this, PROJECT_OPEN_CUSTOM_FFMPEG_OPTIONS_COMMAND, [this]() { return openCustomFFmpegOptions(); });
+     cd->onRequest(this, PROJECT_OPEN_CUSTOM_MAPPING_COMMAND, [this]() { return openCustomMapping(); });
++    cd->onRequest(this, PROJECT_PLOT_SPECTRUM_COMMAND, [this]() { return openPlotSpectrum(); });
+ 
+     static const std::vector<ActionToCommand> actionToCommand = {
+         { "file-new", PROJECT_NEW_COMMAND, {} },
+@@ -283,6 +284,7 @@ void ProjectActionsController::init()
+         { OPEN_METADATA_DIALOG, PROJECT_OPEN_METADATA_DIALOG_COMMAND, {} },
+         { OPEN_CUSTOM_FFMPEG_OPTIONS, PROJECT_OPEN_CUSTOM_FFMPEG_OPTIONS_COMMAND, {} },
+         { OPEN_CUSTOM_MAPPING, PROJECT_OPEN_CUSTOM_MAPPING_COMMAND, {} },
++        { "plot-spectrum", PROJECT_PLOT_SPECTRUM_COMMAND, {} },
+     };
+ 
+     registerActionToCommand(this, actionToCommand, commandDispatcher(), dispatcher());
+@@ -290,13 +292,16 @@ void ProjectActionsController::init()
+     globalContext()->currentTrackeditProjectChanged().onNotify(this, [this]() {
+         listenTrackeditProjectChanges();
+         listenCloudProjectChanges();
++        listenSelectionChanges();
+     });
+ 
+     listenTrackeditProjectChanges();
+     listenCloudProjectChanges();
++    listenSelectionChanges();
+ 
+     recordController()->isRecordingChanged().onNotify(this, [this]() {
+         m_actionEnabledChanged.send(prohibitedWhileRecording());
++        m_actionEnabledChanged.send({ "plot-spectrum" });
+     });
+ }
+ 
+@@ -362,6 +367,10 @@ bool ProjectActionsController::canReceiveAction(const muse::actions::ActionCode&
+         return false;
+     }
+ 
++    if (code == "plot-spectrum" && !canPlotSpectrum()) {
++        return false;
++    }
++
+     return true;
+ }
+ 
+@@ -1849,6 +1858,52 @@ muse::Ret ProjectActionsController::openMetadataDialog()
+     return make_ok();
+ }
+ 
++muse::Ret ProjectActionsController::openPlotSpectrum()
++{
++    if (!canPlotSpectrum()) {
++        return muse::make_ret(muse::Ret::Code::NotSupported);
++    }
++
++    interactive()->open(PLOT_SPECTRUM_URI);
++    return make_ok();
++}
++
++bool ProjectActionsController::canPlotSpectrum() const
++{
++    if (!currentProject() || recordController()->isRecording()) {
++        return false;
++    }
++
++    const auto selection = selectionController();
++    if (!selection) {
++        return false;
++    }
++
++    return !selection->timeSelectionIsEmpty() && selection->timeSelectionHasAudioData();
++}
++
++void ProjectActionsController::listenSelectionChanges()
++{
++    const auto selection = selectionController();
++    if (!selection) {
++        return;
++    }
++
++    selection->dataSelectedStartTimeChanged().onReceive(this, [this](trackedit::secs_t) {
++        m_actionEnabledChanged.send({ "plot-spectrum" });
++    }, muse::async::Asyncable::Mode::SetReplace);
++
++    selection->dataSelectedEndTimeChanged().onReceive(this, [this](trackedit::secs_t) {
++        m_actionEnabledChanged.send({ "plot-spectrum" });
++    }, muse::async::Asyncable::Mode::SetReplace);
++
++    selection->selectedTracksChanged().onReceive(this, [this](const trackedit::TrackIdList&) {
++        m_actionEnabledChanged.send({ "plot-spectrum" });
++    }, muse::async::Asyncable::Mode::SetReplace);
++
++    m_actionEnabledChanged.send({ "plot-spectrum" });
++}
++
+ muse::Ret ProjectActionsController::openCustomMapping()
+ {
+     interactive()->open(CUSTOM_MAPPING);
+diff --git a/src/project/internal/projectactionscontroller.h b/src/project/internal/projectactionscontroller.h
+index ae6350d8b6..919087a165 100644
+--- a/src/project/internal/projectactionscontroller.h
++++ b/src/project/internal/projectactionscontroller.h
+@@ -21,6 +21,7 @@
+ #include "iopensaveprojectscenario.h"
+ #include "framework/toast/itoastservice.h"
+ #include "trackedit/iprojecthistory.h"
++#include "trackedit/iselectioncontroller.h"
+ #include "record/irecordcontroller.h"
+ #include "importexport/export/internal/exportconfiguration.h"
+ #include "importexport/import/iimporter.h"
+@@ -56,6 +57,7 @@ class ProjectActionsController : public IProjectFilesController, public muse::ac
+     muse::ContextInject<muse::IInteractive> interactive { this };
+     muse::ContextInject<IOpenSaveProjectScenario> openSaveProjectScenario { this };
+     muse::ContextInject<trackedit::IProjectHistory> projectHistory { this };
++    muse::ContextInject<trackedit::ISelectionController> selectionController { this };
+     muse::ContextInject<record::IRecordController> recordController { this };
+     muse::ContextInject<importexport::IImporter> importer { this };
+     muse::ContextInject<au3cloud::IAu3AudioComService> audioComService { this };
+@@ -148,11 +150,14 @@ private:
+     muse::Ret openCustomFFmpegOptions();
+     muse::Ret openMetadataDialog();
+     muse::Ret openCustomMapping();
++    muse::Ret openPlotSpectrum();
+ 
+     muse::Ret ensureAuthorization();
+ 
+     void listenTrackeditProjectChanges();
+     void listenCloudProjectChanges();
++    void listenSelectionChanges();
++    bool canPlotSpectrum() const;
+ 
+     bool m_isProjectSaving = false;
+     bool m_isProjectClosing = false;
+diff --git a/src/project/internal/projectcommandsregister.cpp b/src/project/internal/projectcommandsregister.cpp
+index f49fa37129..9390b789d1 100644
+--- a/src/project/internal/projectcommandsregister.cpp
++++ b/src/project/internal/projectcommandsregister.cpp
+@@ -212,6 +212,15 @@ const std::vector<CommandInfo> commandInfos = {
+         InputSchema(),
+         Decoration()
+     },
++    CommandInfo{
++        PROJECT_PLOT_SPECTRUM_COMMAND,
++        //: Command title: shown as a menu item or a button label; keep it short
++        TranslatableString("command", "Plot spectrum"),
++        //: Command description: shown as a tooltip; can be a full sentence
++        TranslatableString("command_description", "Plot the spectrum of the selected audio"),
++        InputSchema(),
++        Decoration()
++    },
+ };
+ }
+ 
+diff --git a/src/project/internal/projectuiactions.cpp b/src/project/internal/projectuiactions.cpp
+index 69b37ff1e3..d6b122c358 100644
+--- a/src/project/internal/projectuiactions.cpp
++++ b/src/project/internal/projectuiactions.cpp
+@@ -543,12 +543,12 @@ const UiActionList ProjectUiActions::m_actions = {
+              TranslatableString("action_description", "Contrast analyzer")
+              ),
+     UiAction("plot-spectrum",
+-             au::context::UiCtxUnknown,
+-             au::context::CTX_ANY,
++             au::context::UiCtxProjectOpened,
++             au::context::CTX_PROJECT_OPENED,
+              //: Action title: shown as a menu item or a button label; keep it short
+-             TranslatableString("action", "Plot spectrum"),
++             TranslatableString("action", "Plot spectrum..."),
+              //: Action description: shown as a tooltip; can be a full sentence
+-             TranslatableString("action_description", "Plot spectrum")
++             TranslatableString("action_description", "Plot the spectrum of the selected audio")
+              ),
+ 
+     // tools menu
+diff --git a/src/project/project.qrc b/src/project/project.qrc
+index b919ebef36..77dd106935 100644
+--- a/src/project/project.qrc
++++ b/src/project/project.qrc
+@@ -2,6 +2,7 @@
+     <qresource prefix="/">
+         <file>qml/Audacity/Project/qmldir</file>
+         <file>qml/Audacity/Project/NewProjectDialog.qml</file>
++        <file>qml/Audacity/Project/PlotSpectrumDialog.qml</file>
+         <file>qml/Audacity/Project/ProjectsPage.qml</file>
+         <file>qml/Audacity/Project/internal/ProjectsPage/ProjectGridItem.qml</file>
+         <file>qml/Audacity/Project/internal/ProjectsPage/ProjectListItem.qml</file>
+diff --git a/src/project/projectcommands.h b/src/project/projectcommands.h
+index c0d34a97eb..4298ee8006 100644
+--- a/src/project/projectcommands.h
++++ b/src/project/projectcommands.h
+@@ -5,6 +5,7 @@
+ 
+ #include <string>
+ 
++#include "framework/global/types/uri.h"
+ #include "framework/rcommand/commandtypes.h"
+ 
+ namespace au::project {
+@@ -33,6 +34,9 @@ inline static const muse::rcommand::Command PROJECT_EXPORT_MIDI_COMMAND("command
+ inline static const muse::rcommand::Command PROJECT_OPEN_METADATA_DIALOG_COMMAND("command://project/open-metadata-dialog");
+ inline static const muse::rcommand::Command PROJECT_OPEN_CUSTOM_FFMPEG_OPTIONS_COMMAND("command://project/open-custom-ffmpeg-options");
+ inline static const muse::rcommand::Command PROJECT_OPEN_CUSTOM_MAPPING_COMMAND("command://project/open-custom-mapping");
++inline static const muse::rcommand::Command PROJECT_PLOT_SPECTRUM_COMMAND("command://project/plot-spectrum");
++
++inline static const muse::Uri PLOT_SPECTRUM_URI("audacity://project/plot-spectrum");
+ 
+ inline static const std::string PROJECT_URL_PARAM("url");
+ inline static const std::string PROJECT_DISPLAY_NAME_PARAM("displayName");
+diff --git a/src/project/projectmodule.cpp b/src/project/projectmodule.cpp
+index 2000264c1b..8bf8eef3f0 100644
+--- a/src/project/projectmodule.cpp
++++ b/src/project/projectmodule.cpp
+@@ -48,7 +48,9 @@
+ #include "view/thumbnailloader.h"
+ #include "view/pixmapprojectthumbnailview.h"
+ #include "view/newprojectmodel.h"
++#include "view/plotspectrum/plotspectrummodel.h"
+ #include "internal/opensaveprojectscenario.h"
++#include "project/projectcommands.h"
+ 
+ #ifdef Q_OS_MAC
+ #include "internal/platform/macos/macosrecentfilescontroller.h"
+@@ -97,6 +99,7 @@ void ProjectModule::resolveImports()
+         ir->registerQmlUri(muse::Uri("audacity://project/asklocationtype"), "Audacity/Project/AskLocationTypeDialog.qml");
+         ir->registerQmlUri(muse::Uri("audacity://project/savetocloud"), "Audacity/Project/SaveToCloudDialog.qml");
+         ir->registerQmlUri(muse::Uri("audacity://project/cloudprojectsyncing"), "Audacity/Project/CloudProjectSyncDialog.qml");
++        ir->registerQmlUri(PLOT_SPECTRUM_URI, "Audacity/Project/PlotSpectrumDialog.qml");
+     }
+ 
+     auto cr = globalIoc()->resolve<muse::rcommand::ICommandsRegister>(mname);
+@@ -124,6 +127,7 @@ void ProjectModule::registerUiTypes()
+     qmlRegisterType<PixmapProjectThumbnailView>("Audacity.Project", 1, 0, "PixmapProjectThumbnailView");
+     qmlRegisterType<ProjectPropertiesModel>("Audacity.Project", 1, 0, "ProjectPropertiesModel");
+     qmlRegisterType<CloudProjectSyncModel>("Audacity.Project", 1, 0, "CloudProjectSyncModel");
++    qmlRegisterType<PlotSpectrumModel>("Audacity.Project", 1, 0, "PlotSpectrumModel");
+ 
+     qmlRegisterUncreatableType<QMLSaveLocationType>("Audacity.Project", 1, 0, "SaveLocationType",
+                                                     "Not creatable as it is an enum type");
+diff --git a/src/project/qml/Audacity/Project/qmldir b/src/project/qml/Audacity/Project/qmldir
+index 87f1aaa0ef..86ce4862b7 100644
+--- a/src/project/qml/Audacity/Project/qmldir
++++ b/src/project/qml/Audacity/Project/qmldir
+@@ -1,6 +1,7 @@
+ module Audacity.Project
+ ProjectsPage 1.0 ProjectsPage.qml
+ NewProjectDialog 1.0 NewProjectDialog.qml
++PlotSpectrumDialog 1.0 PlotSpectrumDialog.qml
+ AskLocationTypeDialog 1.0 AskLocationTypeDialog.qml
+ ProjectPropertiesDialog 1.0 ProjectPropertiesDialog.qml
+ AudioGenerationSettings 1.0 AudioGenerationSettings.qml
+diff --git a/src/project/qml/Audacity/Project/PlotSpectrumDialog.qml b/src/project/qml/Audacity/Project/PlotSpectrumDialog.qml
+new file mode 100644
+index 0000000000..bdb920397c
+--- /dev/null
++++ b/src/project/qml/Audacity/Project/PlotSpectrumDialog.qml
+@@ -0,0 +1,366 @@
++/*
++ * Audacity: A Digital Audio Editor
++ */
++import QtQuick
++import QtQuick.Controls
++import QtQuick.Layouts
++
++import Muse.Ui
++import Muse.UiComponents
++import Audacity.Project
++
++StyledDialogView {
++    id: root
++
++    title: qsTrc("project/plotspectrum", "Frequency Analysis")
++
++    contentWidth: 720
++    contentHeight: 560
++    resizable: true
++
++    property alias model: spectrumModel
++
++    PlotSpectrumModel {
++        id: spectrumModel
++    }
++
++    Component.onCompleted: {
++        if (!spectrumModel.load()) {
++            root.reject()
++        }
++    }
++
++    onClosed: {
++        spectrumModel.close()
++    }
++
++    ColumnLayout {
++        id: content
++
++        anchors.fill: parent
++        anchors.margins: 12
++        spacing: 8
++
++        RowLayout {
++            Layout.fillWidth: true
++            Layout.fillHeight: true
++            spacing: 8
++
++            // Vertical axis labels
++            Item {
++                id: yAxis
++
++                Layout.preferredWidth: 52
++                Layout.fillHeight: true
++
++                Repeater {
++                    model: spectrumModel.yTicks
++
++                    delegate: Item {
++                        anchors.left: parent.left
++                        anchors.right: parent.right
++                        y: plotArea.height * (1.0 - modelData.position) - height / 2
++                        height: 16
++                        visible: modelData.label !== ""
++
++                        StyledTextLabel {
++                            anchors.fill: parent
++                            horizontalAlignment: Text.AlignRight
++                            text: modelData.label
++                            font: ui.theme.bodyFont
++                        }
++                    }
++                }
++
++                StyledTextLabel {
++                    anchors.horizontalCenter: parent.horizontalCenter
++                    anchors.top: parent.top
++                    text: spectrumModel.yUnit
++                    font: ui.theme.bodyBoldFont
++                }
++            }
++
++            ColumnLayout {
++                Layout.fillWidth: true
++                Layout.fillHeight: true
++                spacing: 4
++
++                Rectangle {
++                    id: plotArea
++
++                    Layout.fillWidth: true
++                    Layout.fillHeight: true
++                    color: "#FEFEFE"
++                    border.color: ui.theme.fontPrimaryColor
++                    border.width: 1
++                    clip: true
++
++                    onWidthChanged: spectrumModel.plotWidth = Math.max(0, Math.floor(width) - 2)
++
++                    Canvas {
++                        id: plotCanvas
++                        anchors.fill: parent
++                        anchors.margins: 1
++
++                        onPaint: {
++                            var ctx = getContext("2d")
++                            ctx.reset()
++                            ctx.fillStyle = "#FFFFFF"
++                            ctx.fillRect(0, 0, width, height)
++
++                            var samples = spectrumModel.plotSamples
++                            if (!samples || samples.length === 0) {
++                                ctx.fillStyle = ui.theme.fontPrimaryColor
++                                ctx.font = "12px sans-serif"
++                                var msg = spectrumModel.hasEnoughData
++                                          ? qsTrc("project/plotspectrum", "No data")
++                                          : qsTrc("project/plotspectrum", "Not enough data selected.")
++                                var metrics = ctx.measureText(msg)
++                                ctx.fillText(msg, (width - metrics.width) / 2, height / 2)
++                                return
++                            }
++
++                            if (spectrumModel.drawGrid) {
++                                ctx.strokeStyle = "#DDDDDD"
++                                ctx.lineWidth = 1
++                                var xt = spectrumModel.xTicks
++                                for (var i = 0; i < xt.length; ++i) {
++                                    var x = xt[i].position * width
++                                    ctx.beginPath()
++                                    ctx.moveTo(x, 0)
++                                    ctx.lineTo(x, height)
++                                    ctx.stroke()
++                                }
++                                var yt = spectrumModel.yTicks
++                                for (var j = 0; j < yt.length; ++j) {
++                                    var y = (1.0 - yt[j].position) * height
++                                    ctx.beginPath()
++                                    ctx.moveTo(0, y)
++                                    ctx.lineTo(width, y)
++                                    ctx.stroke()
++                                }
++                            }
++
++                            ctx.fillStyle = spectrumModel.algorithm === 0 ? "#2C5AA0" : "#2C8A5A"
++                            for (var k = 0; k < samples.length; ++k) {
++                                var h = samples[k] * (height - 1)
++                                if (h > 0) {
++                                    ctx.fillRect(k, height - h, 1, h)
++                                }
++                            }
++
++                            if (spectrumModel.hoverActive && spectrumModel.peakPosition >= 0) {
++                                var px = spectrumModel.peakPosition * width
++                                ctx.strokeStyle = "#FF2020"
++                                ctx.beginPath()
++                                ctx.moveTo(px, 0)
++                                ctx.lineTo(px, height)
++                                ctx.stroke()
++                            }
++                        }
++
++                        Connections {
++                            target: spectrumModel
++                            function onPlotChanged() { plotCanvas.requestPaint() }
++                            function onHoverChanged() { plotCanvas.requestPaint() }
++                            function onDrawGridChanged() { plotCanvas.requestPaint() }
++                        }
++
++                        MouseArea {
++                            anchors.fill: parent
++                            hoverEnabled: true
++                            cursorShape: containsMouse ? Qt.CrossCursor : Qt.ArrowCursor
++
++                            onPositionChanged: function(mouse) {
++                                spectrumModel.updateHover(mouse.x, mouse.y, width, height)
++                            }
++                            onExited: spectrumModel.clearHover()
++                        }
++                    }
++                }
++
++                // Horizontal axis
++                Item {
++                    id: xAxis
++                    Layout.fillWidth: true
++                    Layout.preferredHeight: 28
++
++                    Repeater {
++                        model: spectrumModel.xTicks
++
++                        delegate: Item {
++                            x: modelData.position * parent.width - width / 2
++                            width: 48
++                            height: parent.height
++                            visible: modelData.label !== ""
++
++                            StyledTextLabel {
++                                anchors.horizontalCenter: parent.horizontalCenter
++                                anchors.top: parent.top
++                                text: modelData.label
++                                font: ui.theme.bodyFont
++                            }
++                        }
++                    }
++
++                    StyledTextLabel {
++                        anchors.right: parent.right
++                        anchors.bottom: parent.bottom
++                        text: spectrumModel.xUnit
++                        font: ui.theme.bodyBoldFont
++                    }
++                }
++            }
++
++            // Zoom / pan controls
++            ColumnLayout {
++                Layout.preferredWidth: 36
++                Layout.fillHeight: true
++                spacing: 4
++
++                StyledTextLabel {
++                    Layout.alignment: Qt.AlignHCenter
++                    text: "+"
++                }
++
++                Slider {
++                    id: zoomSlider
++                    Layout.fillHeight: true
++                    Layout.alignment: Qt.AlignHCenter
++                    orientation: Qt.Vertical
++                    from: 1
++                    to: 100
++                    stepSize: 1
++                    value: spectrumModel.zoom
++                    onMoved: spectrumModel.zoom = value
++                }
++
++                StyledTextLabel {
++                    Layout.alignment: Qt.AlignHCenter
++                    text: "−"
++                }
++
++                ScrollBar {
++                    id: panBar
++                    Layout.fillHeight: true
++                    Layout.preferredWidth: 12
++                    Layout.alignment: Qt.AlignHCenter
++                    orientation: Qt.Vertical
++                    policy: ScrollBar.AlwaysOn
++                    size: spectrumModel.panMax > 0 ? spectrumModel.panPage / spectrumModel.panMax : 1
++                    position: spectrumModel.panMax > 0 ? spectrumModel.pan / spectrumModel.panMax : 0
++                    onPositionChanged: {
++                        if (spectrumModel.panMax > 0) {
++                            spectrumModel.pan = Math.round(position * spectrumModel.panMax)
++                        }
++                    }
++                }
++            }
++        }
++
++        RowLayout {
++            Layout.fillWidth: true
++            spacing: 12
++
++            StyledTextLabel {
++                text: qsTrc("project/plotspectrum", "Cursor:")
++            }
++            TextInputField {
++                Layout.fillWidth: true
++                readOnly: true
++                currentText: spectrumModel.cursorText
++            }
++
++            StyledTextLabel {
++                text: qsTrc("project/plotspectrum", "Peak:")
++            }
++            TextInputField {
++                Layout.fillWidth: true
++                readOnly: true
++                currentText: spectrumModel.peakText
++            }
++
++            CheckBox {
++                text: qsTrc("project/plotspectrum", "Grids")
++                checked: spectrumModel.drawGrid
++                onClicked: spectrumModel.drawGrid = !spectrumModel.drawGrid
++            }
++        }
++
++        ProgressBar {
++            Layout.fillWidth: true
++            visible: spectrumModel.analyzing
++            from: 0
++            to: 1
++            value: spectrumModel.progress
++        }
++
++        GridLayout {
++            Layout.fillWidth: true
++            columns: 6
++            columnSpacing: 8
++            rowSpacing: 8
++
++            StyledTextLabel { text: qsTrc("project/plotspectrum", "Algorithm:") }
++            StyledDropdown {
++                Layout.fillWidth: true
++                Layout.columnSpan: 1
++                model: spectrumModel.algorithmNames
++                currentIndex: spectrumModel.algorithm
++                onActivated: function(index, value) { spectrumModel.algorithm = index }
++            }
++
++            StyledTextLabel { text: qsTrc("project/plotspectrum", "Size:") }
++            StyledDropdown {
++                Layout.fillWidth: true
++                model: spectrumModel.sizeNames
++                currentIndex: spectrumModel.sizeChoice
++                onActivated: function(index, value) { spectrumModel.sizeChoice = index }
++            }
++
++            FlatButton {
++                text: qsTrc("project/plotspectrum", "Export...")
++                onClicked: spectrumModel.exportData()
++            }
++
++            FlatButton {
++                text: qsTrc("project/plotspectrum", "Replot")
++                onClicked: spectrumModel.replot()
++            }
++
++            StyledTextLabel { text: qsTrc("project/plotspectrum", "Function:") }
++            StyledDropdown {
++                Layout.fillWidth: true
++                model: spectrumModel.windowFuncNames
++                currentIndex: spectrumModel.windowFunc
++                onActivated: function(index, value) { spectrumModel.windowFunc = index }
++            }
++
++            StyledTextLabel { text: qsTrc("project/plotspectrum", "Axis:") }
++            StyledDropdown {
++                Layout.fillWidth: true
++                enabled: spectrumModel.axisEnabled
++                model: spectrumModel.axisNames
++                currentIndex: spectrumModel.axisChoice
++                onActivated: function(index, value) { spectrumModel.axisChoice = index }
++            }
++
++            Item { Layout.fillWidth: true; Layout.columnSpan: 2 }
++        }
++
++        ButtonBox {
++            Layout.fillWidth: true
++            navigationPanel.section: root.navigationSection
++
++            FlatButton {
++                text: qsTrc("global", "Close")
++                buttonRole: ButtonBoxModel.AcceptRole
++                buttonId: ButtonBoxModel.Close
++                onClicked: {
++                    spectrumModel.close()
++                    root.accept()
++                }
++            }
++        }
++    }
++}
+diff --git a/src/project/view/plotspectrum/plotspectrumanalyzer.h b/src/project/view/plotspectrum/plotspectrumanalyzer.h
+new file mode 100644
+index 0000000000..cde40aa8e0
+--- /dev/null
++++ b/src/project/view/plotspectrum/plotspectrumanalyzer.h
+@@ -0,0 +1,52 @@
++/*
++ * Audacity: A Digital Audio Editor
++ */
++#pragma once
++
++#include "au3-builtin-effects/PlotSpectrumBase.h"
++
++namespace au::project {
++//! Thin public wrapper around the au3 Plot Spectrum analysis engine.
++class PlotSpectrumAnalyzer : public PlotSpectrumBase
++{
++public:
++    explicit PlotSpectrumAnalyzer(AudacityProject& project);
++
++    bool loadAudio();
++    bool recalculate(SpectrumAnalyst::ProgressFn progress = nullptr);
++
++    SpectrumAnalyst* analyst() const { return mAnalyst.get(); }
++
++    bool drawGrid() const { return mDrawGrid; }
++    void setDrawGrid(bool value) { mDrawGrid = value; }
++
++    int sizeChoice() const { return mSize; }
++    void setSizeChoice(int value);
++
++    SpectrumAnalyst::Algorithm algorithm() const { return mAlg; }
++    void setAlgorithm(SpectrumAnalyst::Algorithm value) { mAlg = value; }
++
++    int windowFunc() const { return mFunc; }
++    void setWindowFunc(int value) { mFunc = value; }
++
++    int axisChoice() const { return mAxis; }
++    void setAxisChoice(int value) { mAxis = value; }
++
++    int dbRange() const { return dBRange; }
++    void setDbRange(int value) { dBRange = value; }
++
++    double rate() const { return mRate; }
++    size_t dataLen() const { return mDataLen; }
++    size_t windowSize() const { return mWindowSize; }
++    bool hasEnoughData() const { return mData && mDataLen >= mWindowSize; }
++
++    float yMin() const { return mYMin; }
++    float yMax() const { return mYMax; }
++
++    void savePrefs() const;
++
++private:
++    float mYMin = 0.f;
++    float mYMax = 0.f;
++};
++}
+diff --git a/src/project/view/plotspectrum/plotspectrumanalyzer.cpp b/src/project/view/plotspectrum/plotspectrumanalyzer.cpp
+new file mode 100644
+index 0000000000..17a336097b
+--- /dev/null
++++ b/src/project/view/plotspectrum/plotspectrumanalyzer.cpp
+@@ -0,0 +1,88 @@
++/*
++ * Audacity: A Digital Audio Editor
++ */
++#include "plotspectrumanalyzer.h"
++
++#include "au3-preferences/Prefs.h"
++#include "au3-project-rate/Decibels.h"
++
++namespace au::project {
++namespace {
++constexpr int kSizeChoices[] = {
++    128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072
++};
++constexpr int kSizeChoiceCount = static_cast<int>(sizeof(kSizeChoices) / sizeof(kSizeChoices[0]));
++
++int windowSizeForChoice(int choice)
++{
++    if (choice < 0 || choice >= kSizeChoiceCount) {
++        choice = 3;
++    }
++    return kSizeChoices[choice];
++}
++}
++
++PlotSpectrumAnalyzer::PlotSpectrumAnalyzer(AudacityProject& project)
++    : PlotSpectrumBase(project)
++{
++    mWindowSize = windowSizeForChoice(mSize);
++
++    dBRange = DecibelScaleCutoff.Read();
++    if (dBRange < 90) {
++        dBRange = 90;
++    }
++}
++
++bool PlotSpectrumAnalyzer::loadAudio()
++{
++    return GetAudio();
++}
++
++void PlotSpectrumAnalyzer::setSizeChoice(int value)
++{
++    mSize = value;
++    mWindowSize = windowSizeForChoice(mSize);
++}
++
++bool PlotSpectrumAnalyzer::recalculate(SpectrumAnalyst::ProgressFn progress)
++{
++    mYMin = 0.f;
++    mYMax = 0.f;
++
++    if (!hasEnoughData()) {
++        return false;
++    }
++
++    const bool ok = mAnalyst->Calculate(
++        mAlg, mFunc, mWindowSize, mRate,
++        mData.get(), mDataLen,
++        &mYMin, &mYMax, std::move(progress));
++
++    if (!ok) {
++        return false;
++    }
++
++    if (mAlg == SpectrumAnalyst::Spectrum) {
++        if (mYMin < -dBRange) {
++            mYMin = -dBRange;
++        }
++        if (mYMax <= -dBRange) {
++            mYMax = -dBRange + 10.f;
++        } else {
++            mYMax += .5f;
++        }
++    }
++
++    return true;
++}
++
++void PlotSpectrumAnalyzer::savePrefs() const
++{
++    gPrefs->Write(wxT("/FrequencyPlotDialog/DrawGrid"), mDrawGrid);
++    gPrefs->Write(wxT("/FrequencyPlotDialog/SizeChoice"), mSize);
++    gPrefs->Write(wxT("/FrequencyPlotDialog/AlgChoice"), static_cast<int>(mAlg));
++    gPrefs->Write(wxT("/FrequencyPlotDialog/FuncChoice"), mFunc);
++    gPrefs->Write(wxT("/FrequencyPlotDialog/AxisChoice"), mAxis);
++    gPrefs->Flush();
++}
++}
+diff --git a/src/project/view/plotspectrum/plotspectrummodel.h b/src/project/view/plotspectrum/plotspectrummodel.h
+new file mode 100644
+index 0000000000..5d7d099a0c
+--- /dev/null
++++ b/src/project/view/plotspectrum/plotspectrummodel.h
+@@ -0,0 +1,198 @@
++/*
++ * Audacity: A Digital Audio Editor
++ */
++#pragma once
++
++#include <memory>
++
++#include <QObject>
++#include <QVariantList>
++
++#include "framework/global/async/asyncable.h"
++#include "framework/global/modularity/ioc.h"
++#include "framework/interactive/iinteractive.h"
++
++#include "context/iglobalcontext.h"
++
++#include "plotspectrumanalyzer.h"
++
++namespace au::project {
++class PlotSpectrumModel : public QObject, public muse::Contextable, public muse::async::Asyncable
++{
++    Q_OBJECT
++
++    Q_PROPERTY(bool ready READ ready NOTIFY readyChanged FINAL)
++    Q_PROPERTY(bool hasEnoughData READ hasEnoughData NOTIFY readyChanged FINAL)
++    Q_PROPERTY(bool analyzing READ analyzing NOTIFY analyzingChanged FINAL)
++    Q_PROPERTY(double progress READ progress NOTIFY progressChanged FINAL)
++
++    Q_PROPERTY(int algorithm READ algorithm WRITE setAlgorithm NOTIFY algorithmChanged FINAL)
++    Q_PROPERTY(int sizeChoice READ sizeChoice WRITE setSizeChoice NOTIFY sizeChoiceChanged FINAL)
++    Q_PROPERTY(int windowFunc READ windowFunc WRITE setWindowFunc NOTIFY windowFuncChanged FINAL)
++    Q_PROPERTY(int axisChoice READ axisChoice WRITE setAxisChoice NOTIFY axisChoiceChanged FINAL)
++    Q_PROPERTY(bool drawGrid READ drawGrid WRITE setDrawGrid NOTIFY drawGridChanged FINAL)
++    Q_PROPERTY(bool logAxis READ logAxis NOTIFY axisChoiceChanged FINAL)
++    Q_PROPERTY(bool axisEnabled READ axisEnabled NOTIFY algorithmChanged FINAL)
++
++    Q_PROPERTY(int zoom READ zoom WRITE setZoom NOTIFY zoomChanged FINAL)
++    Q_PROPERTY(int pan READ pan WRITE setPan NOTIFY panChanged FINAL)
++    Q_PROPERTY(int panMax READ panMax NOTIFY panRangeChanged FINAL)
++    Q_PROPERTY(int panPage READ panPage NOTIFY panRangeChanged FINAL)
++
++    Q_PROPERTY(double xMin READ xMin NOTIFY rangeChanged FINAL)
++    Q_PROPERTY(double xMax READ xMax NOTIFY rangeChanged FINAL)
++    Q_PROPERTY(double yMin READ yMin NOTIFY rangeChanged FINAL)
++    Q_PROPERTY(double yMax READ yMax NOTIFY rangeChanged FINAL)
++    Q_PROPERTY(QString xUnit READ xUnit NOTIFY algorithmChanged FINAL)
++    Q_PROPERTY(QString yUnit READ yUnit NOTIFY algorithmChanged FINAL)
++
++    Q_PROPERTY(QVariantList algorithmNames READ algorithmNames CONSTANT FINAL)
++    Q_PROPERTY(QVariantList sizeNames READ sizeNames CONSTANT FINAL)
++    Q_PROPERTY(QVariantList windowFuncNames READ windowFuncNames CONSTANT FINAL)
++    Q_PROPERTY(QVariantList axisNames READ axisNames CONSTANT FINAL)
++
++    Q_PROPERTY(QVariantList plotSamples READ plotSamples NOTIFY plotChanged FINAL)
++    Q_PROPERTY(QVariantList xTicks READ xTicks NOTIFY plotChanged FINAL)
++    Q_PROPERTY(QVariantList yTicks READ yTicks NOTIFY plotChanged FINAL)
++
++    Q_PROPERTY(QString cursorText READ cursorText NOTIFY hoverChanged FINAL)
++    Q_PROPERTY(QString peakText READ peakText NOTIFY hoverChanged FINAL)
++    Q_PROPERTY(double peakPosition READ peakPosition NOTIFY hoverChanged FINAL)
++    Q_PROPERTY(bool hoverActive READ hoverActive NOTIFY hoverChanged FINAL)
++
++    Q_PROPERTY(int plotWidth READ plotWidth WRITE setPlotWidth NOTIFY plotWidthChanged FINAL)
++    Q_PROPERTY(int labelWidth READ labelWidth WRITE setLabelWidth NOTIFY labelSizeChanged FINAL)
++    Q_PROPERTY(int labelHeight READ labelHeight WRITE setLabelHeight NOTIFY labelSizeChanged FINAL)
++
++    muse::ContextInject<au::context::IGlobalContext> globalContext { this };
++    muse::ContextInject<muse::IInteractive> interactive { this };
++
++public:
++    explicit PlotSpectrumModel(QObject* parent = nullptr);
++    ~PlotSpectrumModel() override;
++
++    Q_INVOKABLE bool load();
++    Q_INVOKABLE void replot();
++    Q_INVOKABLE void exportData();
++    Q_INVOKABLE void close();
++    Q_INVOKABLE void updateHover(double x, double y, double width, double height);
++    Q_INVOKABLE void clearHover();
++
++    bool ready() const { return m_ready; }
++    bool hasEnoughData() const;
++    bool analyzing() const { return m_analyzing; }
++    double progress() const { return m_progress; }
++
++    int algorithm() const;
++    void setAlgorithm(int value);
++
++    int sizeChoice() const;
++    void setSizeChoice(int value);
++
++    int windowFunc() const;
++    void setWindowFunc(int value);
++
++    int axisChoice() const;
++    void setAxisChoice(int value);
++
++    bool drawGrid() const;
++    void setDrawGrid(bool value);
++
++    bool logAxis() const;
++    bool axisEnabled() const;
++
++    int zoom() const { return m_zoom; }
++    void setZoom(int value);
++
++    int pan() const { return m_pan; }
++    void setPan(int value);
++    int panMax() const { return m_panMax; }
++    int panPage() const { return m_panPage; }
++
++    double xMin() const { return m_xMin; }
++    double xMax() const { return m_xMax; }
++    double yMin() const { return m_yMin; }
++    double yMax() const { return m_yMax; }
++    QString xUnit() const;
++    QString yUnit() const;
++
++    QVariantList algorithmNames() const;
++    QVariantList sizeNames() const;
++    QVariantList windowFuncNames() const;
++    QVariantList axisNames() const;
++
++    QVariantList plotSamples() const { return m_plotSamples; }
++    QVariantList xTicks() const { return m_xTicks; }
++    QVariantList yTicks() const { return m_yTicks; }
++
++    QString cursorText() const { return m_cursorText; }
++    QString peakText() const { return m_peakText; }
++    double peakPosition() const { return m_peakPosition; }
++    bool hoverActive() const { return m_hoverActive; }
++
++    int plotWidth() const { return m_plotWidth; }
++    void setPlotWidth(int value);
++
++    int labelWidth() const { return m_labelWidth; }
++    void setLabelWidth(int value);
++
++    int labelHeight() const { return m_labelHeight; }
++    void setLabelHeight(int value);
++
++signals:
++    void readyChanged();
++    void analyzingChanged();
++    void progressChanged();
++    void algorithmChanged();
++    void sizeChoiceChanged();
++    void windowFuncChanged();
++    void axisChoiceChanged();
++    void drawGridChanged();
++    void zoomChanged();
++    void panChanged();
++    void panRangeChanged();
++    void rangeChanged();
++    void plotChanged();
++    void hoverChanged();
++    void plotWidthChanged();
++    void labelSizeChanged();
++
++private:
++    bool ensureAnalyzer();
++    void refreshDbRange();
++    void recalculate();
++    void updateVisibleRange();
++    void rebuildPlot();
++    void rebuildTicks();
++    double xAtPixel(int pixel, int width) const;
++    double xStep(int width) const;
++
++    std::unique_ptr<PlotSpectrumAnalyzer> m_analyzer;
++    bool m_ready = false;
++    bool m_analyzing = false;
++    double m_progress = 0.0;
++
++    int m_zoom = 100;
++    int m_pan = 0;
++    int m_panMax = 0;
++    int m_panPage = 1;
++
++    double m_xMin = 0.0;
++    double m_xMax = 1.0;
++    double m_yMin = 0.0;
++    double m_yMax = 1.0;
++
++    int m_plotWidth = 0;
++    int m_labelWidth = 40;
++    int m_labelHeight = 16;
++
++    QVariantList m_plotSamples;
++    QVariantList m_xTicks;
++    QVariantList m_yTicks;
++
++    QString m_cursorText;
++    QString m_peakText;
++    double m_peakPosition = -1.0;
++    bool m_hoverActive = false;
++};
++}
+diff --git a/src/project/view/plotspectrum/plotspectrummodel.cpp b/src/project/view/plotspectrum/plotspectrummodel.cpp
+new file mode 100644
+index 0000000000..dd6d7b63be
+--- /dev/null
++++ b/src/project/view/plotspectrum/plotspectrummodel.cpp
+@@ -0,0 +1,604 @@
++/*
++ * Audacity: A Digital Audio Editor
++ */
++#include "plotspectrummodel.h"
++
++#include <cmath>
++#include <algorithm>
++
++#include <QFile>
++#include <QTextStream>
++
++#include "au3-fft/FFT.h"
++#include "au3-math/PitchName.h"
++#include "au3-project/Project.h"
++#include "au3-project-rate/Decibels.h"
++#include "au3-preferences/Prefs.h"
++
++#include "au3wrap/internal/wxtypes_convert.h"
++#include "project/iaudacityproject.h"
++#include "shared/axis/axislabel.h"
++#include "shared/axis/axisticks.h"
++#include "shared/axis/axisscale.h"
++
++#include "framework/global/translation.h"
++#include "modularity/ioc.h"
++
++using namespace au::project;
++
++namespace {
++QString pitchName(double freqHz)
++{
++    return QString::fromStdString(au::au3::wxToStdString(PitchName_Absolute(FreqToMIDInote(freqHz)).Translation()));
++}
++
++QVariantMap tickMap(const QString& label, double position)
++{
++    return {
++        { QStringLiteral("label"), label },
++        { QStringLiteral("position"), position },
++    };
++}
++}
++
++PlotSpectrumModel::PlotSpectrumModel(QObject* parent)
++    : QObject(parent), muse::Contextable(muse::iocCtxForQmlObject(this))
++{
++}
++
++PlotSpectrumModel::~PlotSpectrumModel() = default;
++
++bool PlotSpectrumModel::ensureAnalyzer()
++{
++    const auto project = globalContext()->currentProject();
++    if (!project) {
++        return false;
++    }
++
++    auto* au3Project = reinterpret_cast<AudacityProject*>(project->au3ProjectPtr());
++    if (!au3Project) {
++        return false;
++    }
++
++    if (!m_analyzer) {
++        m_analyzer = std::make_unique<PlotSpectrumAnalyzer>(*au3Project);
++    }
++
++    return true;
++}
++
++bool PlotSpectrumModel::load()
++{
++    clearHover();
++
++    if (!ensureAnalyzer()) {
++        m_ready = false;
++        emit readyChanged();
++        return false;
++    }
++
++    refreshDbRange();
++
++    if (!m_analyzer->loadAudio()) {
++        m_ready = false;
++        emit readyChanged();
++        return false;
++    }
++
++    m_ready = true;
++    emit readyChanged();
++    emit algorithmChanged();
++    emit sizeChoiceChanged();
++    emit windowFuncChanged();
++    emit axisChoiceChanged();
++    emit drawGridChanged();
++
++    recalculate();
++    return true;
++}
++
++void PlotSpectrumModel::replot()
++{
++    if (!ensureAnalyzer()) {
++        return;
++    }
++
++    refreshDbRange();
++    if (!m_analyzer->loadAudio()) {
++        m_ready = false;
++        emit readyChanged();
++        return;
++    }
++
++    m_ready = true;
++    emit readyChanged();
++    recalculate();
++}
++
++void PlotSpectrumModel::close()
++{
++    if (m_analyzer) {
++        m_analyzer->savePrefs();
++    }
++}
++
++void PlotSpectrumModel::refreshDbRange()
++{
++    if (!m_analyzer) {
++        return;
++    }
++
++    int range = DecibelScaleCutoff.Read();
++    if (range < 90) {
++        range = 90;
++    }
++    m_analyzer->setDbRange(range);
++}
++
++void PlotSpectrumModel::recalculate()
++{
++    if (!m_analyzer) {
++        return;
++    }
++
++    m_analyzing = true;
++    m_progress = 0.0;
++    emit analyzingChanged();
++    emit progressChanged();
++
++    const bool ok = m_analyzer->recalculate([this](long long num, long long den) {
++        if (den <= 0) {
++            return;
++        }
++        m_progress = static_cast<double>(num) / static_cast<double>(den);
++        emit progressChanged();
++    });
++
++    m_analyzing = false;
++    m_progress = ok ? 1.0 : 0.0;
++    emit analyzingChanged();
++    emit progressChanged();
++
++    m_pan = 0;
++    updateVisibleRange();
++    rebuildPlot();
++}
++
++bool PlotSpectrumModel::hasEnoughData() const
++{
++    return m_analyzer && m_analyzer->hasEnoughData();
++}
++
++int PlotSpectrumModel::algorithm() const
++{
++    return m_analyzer ? static_cast<int>(m_analyzer->algorithm()) : 0;
++}
++
++void PlotSpectrumModel::setAlgorithm(int value)
++{
++    if (!m_analyzer || value < 0 || value >= SpectrumAnalyst::NumAlgorithms || algorithm() == value) {
++        return;
++    }
++
++    m_analyzer->setAlgorithm(static_cast<SpectrumAnalyst::Algorithm>(value));
++    if (m_analyzer->algorithm() != SpectrumAnalyst::Spectrum) {
++        m_analyzer->setAxisChoice(0);
++    }
++
++    emit algorithmChanged();
++    emit axisChoiceChanged();
++    recalculate();
++}
++
++int PlotSpectrumModel::sizeChoice() const
++{
++    return m_analyzer ? m_analyzer->sizeChoice() : 3;
++}
++
++void PlotSpectrumModel::setSizeChoice(int value)
++{
++    if (!m_analyzer || sizeChoice() == value) {
++        return;
++    }
++
++    m_analyzer->setSizeChoice(value);
++    emit sizeChoiceChanged();
++    recalculate();
++}
++
++int PlotSpectrumModel::windowFunc() const
++{
++    return m_analyzer ? m_analyzer->windowFunc() : 3;
++}
++
++void PlotSpectrumModel::setWindowFunc(int value)
++{
++    if (!m_analyzer || windowFunc() == value) {
++        return;
++    }
++
++    m_analyzer->setWindowFunc(value);
++    emit windowFuncChanged();
++    recalculate();
++}
++
++int PlotSpectrumModel::axisChoice() const
++{
++    return m_analyzer ? m_analyzer->axisChoice() : 1;
++}
++
++void PlotSpectrumModel::setAxisChoice(int value)
++{
++    if (!m_analyzer || !axisEnabled() || axisChoice() == value) {
++        return;
++    }
++
++    m_analyzer->setAxisChoice(value);
++    emit axisChoiceChanged();
++    rebuildPlot();
++}
++
++bool PlotSpectrumModel::drawGrid() const
++{
++    return m_analyzer ? m_analyzer->drawGrid() : true;
++}
++
++void PlotSpectrumModel::setDrawGrid(bool value)
++{
++    if (!m_analyzer || drawGrid() == value) {
++        return;
++    }
++
++    m_analyzer->setDrawGrid(value);
++    emit drawGridChanged();
++}
++
++bool PlotSpectrumModel::logAxis() const
++{
++    return axisEnabled() && axisChoice() != 0;
++}
++
++bool PlotSpectrumModel::axisEnabled() const
++{
++    return algorithm() == SpectrumAnalyst::Spectrum;
++}
++
++void PlotSpectrumModel::setZoom(int value)
++{
++    value = std::clamp(value, 1, 100);
++    if (m_zoom == value) {
++        return;
++    }
++
++    m_zoom = value;
++    emit zoomChanged();
++    updateVisibleRange();
++    rebuildPlot();
++}
++
++void PlotSpectrumModel::setPan(int value)
++{
++    value = std::clamp(value, 0, std::max(0, m_panMax - m_panPage));
++    if (m_pan == value) {
++        return;
++    }
++
++    m_pan = value;
++    emit panChanged();
++    updateVisibleRange();
++    rebuildPlot();
++}
++
++void PlotSpectrumModel::setPlotWidth(int value)
++{
++    value = std::max(0, value);
++    if (m_plotWidth == value) {
++        return;
++    }
++
++    m_plotWidth = value;
++    emit plotWidthChanged();
++    rebuildPlot();
++}
++
++void PlotSpectrumModel::setLabelWidth(int value)
++{
++    if (m_labelWidth == value) {
++        return;
++    }
++    m_labelWidth = value;
++    emit labelSizeChanged();
++    rebuildTicks();
++    emit plotChanged();
++}
++
++void PlotSpectrumModel::setLabelHeight(int value)
++{
++    if (m_labelHeight == value) {
++        return;
++    }
++    m_labelHeight = value;
++    emit labelSizeChanged();
++    rebuildTicks();
++    emit plotChanged();
++}
++
++QString PlotSpectrumModel::xUnit() const
++{
++    return algorithm() == SpectrumAnalyst::Spectrum
++           ? muse::qtrc("project/plotspectrum", "Hz")
++           : muse::qtrc("project/plotspectrum", "s");
++}
++
++QString PlotSpectrumModel::yUnit() const
++{
++    return algorithm() == SpectrumAnalyst::Spectrum
++           ? muse::qtrc("project/plotspectrum", "dB")
++           : QString();
++}
++
++QVariantList PlotSpectrumModel::algorithmNames() const
++{
++    return {
++        muse::qtrc("project/plotspectrum", "Spectrum"),
++        muse::qtrc("project/plotspectrum", "Standard Autocorrelation"),
++        muse::qtrc("project/plotspectrum", "Cuberoot Autocorrelation"),
++        muse::qtrc("project/plotspectrum", "Enhanced Autocorrelation"),
++        muse::qtrc("project/plotspectrum", "Cepstrum"),
++    };
++}
++
++QVariantList PlotSpectrumModel::sizeNames() const
++{
++    return {
++        QStringLiteral("128"), QStringLiteral("256"), QStringLiteral("512"),
++        QStringLiteral("1024"), QStringLiteral("2048"), QStringLiteral("4096"),
++        QStringLiteral("8192"), QStringLiteral("16384"), QStringLiteral("32768"),
++        QStringLiteral("65536"), QStringLiteral("131072"),
++    };
++}
++
++QVariantList PlotSpectrumModel::windowFuncNames() const
++{
++    QVariantList names;
++    const int count = NumWindowFuncs();
++    names.reserve(count);
++    for (int i = 0; i < count; ++i) {
++        const QString name = QString::fromStdString(au::au3::wxToStdString(WindowFuncName(i).Translation()));
++        names.append(muse::qtrc("project/plotspectrum", "%1 window").arg(name));
++    }
++    return names;
++}
++
++QVariantList PlotSpectrumModel::axisNames() const
++{
++    return {
++        muse::qtrc("project/plotspectrum", "Linear frequency"),
++        muse::qtrc("project/plotspectrum", "Log frequency"),
++    };
++}
++
++void PlotSpectrumModel::updateVisibleRange()
++{
++    if (!m_analyzer || !m_analyzer->hasEnoughData() || m_analyzer->analyst()->GetProcessedSize() == 0) {
++        m_xMin = 0.0;
++        m_xMax = 1.0;
++        m_yMin = -90.0;
++        m_yMax = 0.0;
++        m_panMax = 0;
++        m_panPage = 1;
++        emit panRangeChanged();
++        emit rangeChanged();
++        return;
++    }
++
++    const float dataYMin = m_analyzer->yMin();
++    const float dataYMax = m_analyzer->yMax();
++    const float yRange = dataYMax - dataYMin;
++    const float yTotal = yRange * (static_cast<float>(m_zoom) / 100.0f);
++
++    m_panPage = std::max(1, static_cast<int>(yTotal * 100.0f));
++    m_panMax = std::max(m_panPage, static_cast<int>(yRange * 100.0f));
++    m_pan = std::clamp(m_pan, 0, std::max(0, m_panMax - m_panPage));
++
++    m_yMax = dataYMax - (static_cast<float>(m_pan) / 100.0f);
++    m_yMin = m_yMax - yTotal;
++
++    if (m_analyzer->algorithm() == SpectrumAnalyst::Spectrum) {
++        m_xMin = m_analyzer->rate() / m_analyzer->windowSize();
++        m_xMax = m_analyzer->rate() / 2.0;
++    } else {
++        m_xMin = 0.0;
++        m_xMax = m_analyzer->analyst()->GetProcessedSize() / m_analyzer->rate();
++    }
++
++    emit panRangeChanged();
++    emit panChanged();
++    emit rangeChanged();
++}
++
++double PlotSpectrumModel::xStep(int width) const
++{
++    if (width <= 0 || m_xMax <= m_xMin) {
++        return 1.0;
++    }
++
++    if (logAxis()) {
++        const float ratio = static_cast<float>(m_xMax / m_xMin);
++        return std::pow(2.0f, (std::log(ratio) / std::log(2.0f)) / width);
++    }
++
++    return (m_xMax - m_xMin) / width;
++}
++
++double PlotSpectrumModel::xAtPixel(int pixel, int width) const
++{
++    if (logAxis()) {
++        return m_xMin * std::pow(xStep(width), pixel);
++    }
++    return m_xMin + xStep(width) * pixel;
++}
++
++void PlotSpectrumModel::rebuildPlot()
++{
++    m_plotSamples.clear();
++
++    if (!m_analyzer || !m_analyzer->hasEnoughData() || m_analyzer->analyst()->GetProcessedSize() == 0 || m_plotWidth <= 0) {
++        rebuildTicks();
++        emit plotChanged();
++        return;
++    }
++
++    const int width = m_plotWidth;
++    const double yTotal = m_yMax - m_yMin;
++    m_plotSamples.reserve(width);
++
++    for (int i = 0; i < width; ++i) {
++        const double x0 = xAtPixel(i, width);
++        const double x1 = logAxis() ? x0 * xStep(width) : x0 + xStep(width);
++        const float y = m_analyzer->analyst()->GetProcessedValue(static_cast<float>(x0), static_cast<float>(x1));
++        double norm = yTotal > 0.0 ? (y - m_yMin) / yTotal : 0.0;
++        norm = std::clamp(norm, 0.0, 1.0);
++        m_plotSamples.append(norm);
++    }
++
++    rebuildTicks();
++    emit plotChanged();
++}
++
++void PlotSpectrumModel::rebuildTicks()
++{
++    m_xTicks.clear();
++    m_yTicks.clear();
++
++    const shared::AxisScale xScale = logAxis() ? shared::AxisScale::Logarithmic : shared::AxisScale::Linear;
++    const shared::AxisTicks xAxisTicks = shared::axisTicks(m_xMin, m_xMax, xScale);
++    const auto xLabels = shared::labelsForTicks(xAxisTicks.major, m_labelWidth, std::max(1, m_plotWidth));
++    for (size_t i = 0; i < xAxisTicks.major.size(); ++i) {
++        m_xTicks.append(tickMap(QString::fromStdString(xLabels[i]), xAxisTicks.major[i].position));
++    }
++    for (const auto& tick : xAxisTicks.minor) {
++        m_xTicks.append(tickMap(QString(), tick.position));
++    }
++
++    // Vertical axis is drawn top=max to bottom=min; positions are from bottom (0) to top (1)
++    const shared::AxisTicks yAxisTicks = shared::axisTicks(m_yMin, m_yMax, shared::AxisScale::Linear);
++    const auto yLabels = shared::labelsForTicks(yAxisTicks.major, m_labelHeight, 240);
++    for (size_t i = 0; i < yAxisTicks.major.size(); ++i) {
++        m_yTicks.append(tickMap(QString::fromStdString(yLabels[i]), yAxisTicks.major[i].position));
++    }
++    for (const auto& tick : yAxisTicks.minor) {
++        m_yTicks.append(tickMap(QString(), tick.position));
++    }
++}
++
++void PlotSpectrumModel::updateHover(double x, double y, double width, double height)
++{
++    Q_UNUSED(y)
++    Q_UNUSED(height)
++
++    if (!m_analyzer || !m_analyzer->hasEnoughData() || m_analyzer->analyst()->GetProcessedSize() == 0
++        || width <= 2.0 || x <= 0.0 || x >= width - 1.0) {
++        clearHover();
++        return;
++    }
++
++    const int pixel = static_cast<int>(x);
++    const int plotW = static_cast<int>(width);
++    const double xPos = xAtPixel(pixel, plotW);
++    const double nextX = logAxis() ? xPos * xStep(plotW) : xPos + xStep(plotW);
++    const float value = m_analyzer->analyst()->GetProcessedValue(static_cast<float>(xPos), static_cast<float>(nextX));
++
++    float bestValue = 0.f;
++    const float bestPeak = m_analyzer->analyst()->FindPeak(static_cast<float>(xPos), &bestValue);
++
++    if (logAxis()) {
++        m_peakPosition = std::log(bestPeak / m_xMin) / std::log(xStep(plotW)) / (width - 2.0);
++    } else {
++        m_peakPosition = (bestPeak - m_xMin) / (m_xMax - m_xMin);
++    }
++    m_peakPosition = std::clamp(m_peakPosition, 0.0, 1.0);
++
++    if (m_analyzer->algorithm() == SpectrumAnalyst::Spectrum) {
++        m_cursorText = muse::qtrc("project/plotspectrum", "%1 Hz (%2) = %3 dB")
++                       .arg(static_cast<int>(xPos + 0.5))
++                       .arg(pitchName(xPos))
++                       .arg(static_cast<int>(value + 0.5));
++        m_peakText = muse::qtrc("project/plotspectrum", "%1 Hz (%2) = %3 dB")
++                     .arg(static_cast<int>(bestPeak + 0.5))
++                     .arg(pitchName(bestPeak))
++                     .arg(bestValue, 0, 'f', 1);
++    } else if (xPos > 0.0 && bestPeak > 0.0) {
++        m_cursorText = muse::qtrc("project/plotspectrum", "%1 sec (%2 Hz) (%3) = %4")
++                       .arg(xPos, 0, 'f', 4)
++                       .arg(static_cast<int>(1.0 / xPos + 0.5))
++                       .arg(pitchName(1.0 / xPos))
++                       .arg(value);
++        m_peakText = muse::qtrc("project/plotspectrum", "%1 sec (%2 Hz) (%3) = %4")
++                     .arg(bestPeak, 0, 'f', 4)
++                     .arg(static_cast<int>(1.0 / bestPeak + 0.5))
++                     .arg(pitchName(1.0 / bestPeak))
++                     .arg(bestValue, 0, 'f', 3);
++    } else {
++        m_cursorText.clear();
++        m_peakText.clear();
++    }
++
++    m_hoverActive = true;
++    emit hoverChanged();
++}
++
++void PlotSpectrumModel::clearHover()
++{
++    if (!m_hoverActive && m_cursorText.isEmpty() && m_peakText.isEmpty() && m_peakPosition < 0.0) {
++        return;
++    }
++
++    m_hoverActive = false;
++    m_cursorText.clear();
++    m_peakText.clear();
++    m_peakPosition = -1.0;
++    emit hoverChanged();
++}
++
++void PlotSpectrumModel::exportData()
++{
++    if (!m_analyzer || !m_analyzer->hasEnoughData() || m_analyzer->analyst()->GetProcessedSize() == 0) {
++        return;
++    }
++
++    const muse::io::path_t path = interactive()->selectSavingFileSync(
++        muse::trc("project/plotspectrum", "Export Spectral Data As:"),
++        muse::io::path_t("spectrum.txt"),
++        { muse::trc("project/plotspectrum", "Text files") + " (*.txt)",
++          muse::trc("project/plotspectrum", "All files") + " (*)" });
++
++    if (path.empty()) {
++        return;
++    }
++
++    QFile file(QString::fromStdString(path.toStdString()));
++    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
++        interactive()->error(
++            muse::trc("project/plotspectrum", "Error"),
++            muse::qtrc("project/plotspectrum", "Couldn't write to file: %1")
++            .arg(QString::fromStdString(path.toStdString())).toStdString());
++        return;
++    }
++
++    QTextStream out(&file);
++    const int processedSize = m_analyzer->analyst()->GetProcessedSize();
++    const float* processed = m_analyzer->analyst()->GetProcessed();
++
++    if (m_analyzer->algorithm() == SpectrumAnalyst::Spectrum) {
++        out << muse::qtrc("project/plotspectrum", "Frequency (Hz)\tLevel (dB)") << '\n';
++        for (int i = 1; i < processedSize; ++i) {
++            out << (i * m_analyzer->rate() / m_analyzer->windowSize()) << '\t' << processed[i] << '\n';
++        }
++    } else {
++        out << muse::qtrc("project/plotspectrum", "Lag (seconds)\tFrequency (Hz)\tLevel") << '\n';
++        for (int i = 1; i < processedSize; ++i) {
++            out << (i / m_analyzer->rate()) << '\t' << (m_analyzer->rate() / i) << '\t' << processed[i] << '\n';
++        }
++    }
++}

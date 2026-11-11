@@ -712,8 +712,8 @@ MenuItemList AppMenuModel::makeAnalyzeItems()
         makeMenuItem(effects::EFFECTS_PLUGIN_MANAGER_COMMAND),
         makeSeparator(),
         // makeMenuItem("contrast-analyzer"),
-        // makeMenuItem("plot-spectrum"),
-        // makeSeparator(),
+        makeMenuItem("plot-spectrum"),
+        makeSeparator(),
     };
 
     const muse::uicomponents::MenuItemList analyzeMenus = effectsMenuProvider()->destructiveEffectMenu(*this,

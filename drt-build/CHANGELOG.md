@@ -7,6 +7,14 @@ AppImage builds are named `audacity-linux-4.0.2-drt-N.AppImage` (`N` from `.appi
 
 ## [Unreleased]
 
+## [drt-6] - 2026-11-11
+
+Based on Audacity `release-4.0.2` / fork `master`.
+
+### Added
+
+- **Analyze → Plot Spectrum** — Qt/QML port of the Audacity 3.7.9 frequency analysis dialog, reusing `PlotSpectrumBase` + `SpectrumAnalyst`. Supports spectrum / autocorrelation / cepstrum, FFT size, window function, lin/log axis, grid, zoom/pan, cursor/peak readout, replot, and export. Patch: `patches/0005-plot-spectrum.patch`.
+
 ### Fixed
 
 - **Paste inserts at the selection start**, not the playhead. Matches cut/delete and keeps L/R mono tracks aligned after a stereo split. Patch: `patches/0003-paste-at-selection-start.patch`.
