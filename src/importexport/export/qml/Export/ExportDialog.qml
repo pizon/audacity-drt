@@ -23,6 +23,19 @@ StyledDialogView {
 
     margins: 12
 
+    function fitContent() {
+        // Size to the button row, which is the last thing in the form.
+        // implicitHeight can stay at the shorter first layout after "one file
+        // per label" adds rows, and then Cancel and Export are clipped.
+        const buttonBottom = buttonBox.y + buttonBox.height
+        const next = Math.ceil(Math.max(mainColumn.implicitHeight, buttonBottom))
+        if (next > 0 && contentHeight !== next) {
+            contentHeight = next
+        }
+    }
+
+    onOpened: Qt.callLater(fitContent)
+
     modal: true
 
     property int dropdownWidth: 358
@@ -60,11 +73,8 @@ StyledDialogView {
 
         spacing: 12
 
-        onImplicitHeightChanged: {
-            Qt.callLater(function () {
-                root.contentHeight = implicitHeight
-            })
-        }
+        onImplicitHeightChanged: Qt.callLater(root.fitContent)
+        onChildrenRectChanged: Qt.callLater(root.fitContent)
 
         ColumnLayout {
             Layout.margins: 4
@@ -687,6 +697,10 @@ StyledDialogView {
             id: buttonBox
 
             Layout.fillWidth: true
+            Layout.preferredHeight: implicitHeight
+
+            onImplicitHeightChanged: Qt.callLater(root.fitContent)
+            onYChanged: Qt.callLater(root.fitContent)
 
             spacing: 8
 
