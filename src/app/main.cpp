@@ -81,13 +81,16 @@ int main(int argc, char** argv)
 #endif
 
 #ifdef Q_OS_LINUX
-    if (qEnvironmentVariable("AU_QT_QPA_PLATFORM") != "offscreen") {
+    // AU_QT_QPA_PLATFORM, when set, is the Qt platform (xcb, wayland, offscreen).
+    // When unset, leave QT_QPA_PLATFORM alone so Qt follows the session.
+    // Forcing xcb made a Wayland session host an Xwayland client, which is the
+    // path that tripped gnome-shell's app tracker and mutter's X11 focus roundtrip.
+    const QByteArray requestedPlatform = qgetenv("AU_QT_QPA_PLATFORM");
+    if (requestedPlatform != "offscreen") {
         qputenv("QT_QPA_PLATFORMTHEME", "gtk3");
     }
-
-    //! NOTE Forced X11, with Wayland there are a number of problems now
-    if (qEnvironmentVariable("AU_QT_QPA_PLATFORM") == "") {
-        qputenv("QT_QPA_PLATFORM", "xcb");
+    if (!requestedPlatform.isEmpty()) {
+        qputenv("QT_QPA_PLATFORM", requestedPlatform);
     }
 #endif
 

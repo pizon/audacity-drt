@@ -6,10 +6,14 @@ endif()
 
 set(DESKTOP_LAUNCHER_NAME "${MUSE_APP_NAME_VERSION} Portable")
 
-# Identify App's main window so that it receives the correct name
-# and icon in the OS dock / taskbar. Run `xprop WM_CLASS` and click on
-# App's main window to find out what string to use here.
-set(WINDOW_MANAGER_CLASS ${MUSE_APP_NAME_VERSION})
+# Must match QCoreApplication::applicationName in src/app/main.cpp
+# (Audacity4Development / Audacity4). A display name with spaces does not
+# match the X11 WM_CLASS, so the shell tracks a second app.
+if(MUSE_APP_UNSTABLE)
+    set(WINDOW_MANAGER_CLASS "${MUSE_APP_NAME_MACHINE_READABLE}${MUSE_APP_VERSION_MAJOR}Development")
+else()
+    set(WINDOW_MANAGER_CLASS "${MUSE_APP_NAME_MACHINE_READABLE}${MUSE_APP_VERSION_MAJOR}")
+endif()
 
 if (AU4_BUILD_CONFIGURATION STREQUAL "app-portable")
     # Build portable AppImage as per https://github.com/probonopd/AppImageKit

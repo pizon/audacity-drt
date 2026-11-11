@@ -7,6 +7,14 @@ AppImage builds are named `audacity-linux-4.0.2-drt-N.AppImage` (`N` from `.appi
 
 ## [Unreleased]
 
+## [drt-7] - 2026-11-11
+
+Based on Audacity `release-4.0.2` / fork `master`.
+
+### Fixed
+
+- **Follow the desktop session instead of forcing X11.** `AU_QT_QPA_PLATFORM`, when set, is copied to `QT_QPA_PLATFORM` (`xcb`, `wayland`, or `offscreen`). When unset, Qt chooses the session platform. `StartupWMClass` is `Audacity4Development` or `Audacity4`, matching the process window class.
+
 ## [drt-6] - 2026-11-11
 
 Based on Audacity `release-4.0.2` / fork `master`.
