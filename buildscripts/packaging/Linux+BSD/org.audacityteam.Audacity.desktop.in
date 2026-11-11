@@ -9,7 +9,7 @@ Icon=audacity@MUSE_APP_INSTALL_SUFFIX@
 Exec=audacity@MUSE_APP_INSTALL_SUFFIX@ %U
 Terminal=false
 MimeType=application/x-audacity;
-StartupNotify=true
+StartupNotify=false
 StartupWMClass=@WINDOW_MANAGER_CLASS@
 
 Categories=AudioVideo;Audio;AudioVideoEditing;

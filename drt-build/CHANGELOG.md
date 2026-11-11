@@ -7,6 +7,10 @@ AppImage builds are named `audacity-linux-4.0.2-drt-N.AppImage` (`N` from `.appi
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stop GNOME’s launch-feedback busy cursor.** The desktop entry sets `StartupNotify=false`. On Wayland, Qt never completes that notification, so the shell kept the watch cursor up while it still considered the app to be starting.
+
 ## [drt-7] - 2026-11-11
 
 Based on Audacity `release-4.0.2` / fork `master`.
